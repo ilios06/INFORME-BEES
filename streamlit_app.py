@@ -28,17 +28,14 @@ def obtener_servicio_drive():
 # --- 2. DESCARGA Y CACHÉ DE DATOS ---
 @st.cache_data(ttl=3600)  # El caché se limpia automáticamente cada hora
 def descargar_datos_maestros(file_id):
-    """Descarga un Google Sheet nativo convirtiéndolo dinámicamente a Excel"""
+    """Descarga un archivo Excel (.xlsx) real almacenado en Google Drive"""
     service = obtener_servicio_drive()
     if not service:
         return pd.DataFrame()
         
     try:
-        # 🌟 EL CAMBIO CLAVE: Usamos export_media en lugar de get_media indicando el formato Excel
-        request = service.files().export_media(
-            fileId=file_id, 
-            mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
+        # 🌟 RETORNO A GET_MEDIA: Tu archivo es un Excel real (.xlsx), se descarga binario directo
+        request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -46,7 +43,7 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        # Leemos las columnas respetando los formatos de texto originales
+        # Leemos el archivo binario mapeando los formatos de texto originales
         df = pd.read_excel(fh, dtype={
             'Fecha_Ingreso': str,
             'Fecha_Facturacion': str,
@@ -65,7 +62,7 @@ def descargar_datos_maestros(file_id):
                 
         return df
     except Exception as e:
-        st.error(f"❌ Error al exportar e interpretar el Google Sheet de Drive: {e}")
+        st.error(f"❌ Error al descargar e interpretar el Excel de Drive: {e}")
         return pd.DataFrame()
 
 # --- 3. CARGA DE DATOS INICIAL ---
