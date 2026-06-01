@@ -16,25 +16,22 @@ st.set_page_config(
 # --- 1. CONEXIÓN SEGURA CON GOOGLE DRIVE (USANDO SECRETS) ---
 @st.cache_resource
 def obtener_servicio_drive():
-    """Autentica con Google Drive usando las credenciales seguras de Streamlit"""
     try:
         info_claves = st.secrets["gcp_service_account"]
         creds = service_account.Credentials.from_service_account_info(info_claves)
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"❌ Error de autenticación: Verifica la configuración de st.secrets. Detalles: {e}")
+        st.error(f"❌ Error de autenticación: Verifica st.secrets. Detalles: {e}")
         return None
 
-# --- 2. DESCARGA Y CACHÉ DE DATOS ---
-@st.cache_data(ttl=3600)  # El caché se limpia automáticamente cada hora
+# --- 2. DESCARGA Y OPTIMIZACIÓN DE CACHÉ DE DATOS ---
+@st.cache_data(ttl=3600)
 def descargar_datos_maestros(file_id):
-    """Descarga un archivo Excel (.xlsx) real almacenado en Google Drive"""
     service = obtener_servicio_drive()
     if not service:
         return pd.DataFrame()
         
     try:
-        # 🌟 RETORNO A GET_MEDIA: Tu archivo es un Excel real (.xlsx), se descarga binario directo
         request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
@@ -43,16 +40,28 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        # Leemos el archivo binario mapeando los formatos de texto originales
+        # Carga rápida mapeando tipos estrictos como texto
         df = pd.read_excel(fh, dtype={
             'Fecha_Ingreso': str,
             'Fecha_Facturacion': str,
             'ID_Pedido_Ingresado': str,
             'ID_Factura_Final': str,
             'SKU_Material_Ingresado': str,
-            'Codigo_Cliente': str
+            'Codigo_Cliente': str,
+            'Motivo_Devolucion': str,
+            'Zona_OfVta': str,
+            'Tipo_Pedido': str
         })
         
+        # ⚡ OPTIMIZACIÓN CRÍTICA DE VELOCIDAD: Procesar fechas y meses dentro del caché (Una sola vez)
+        df['Fecha_Ingreso_DT'] = pd.to_datetime(df['Fecha_Ingreso'], format='%d/%m/%Y', errors='coerce')
+        
+        meses_es = {1:'Enero', 2:'Febrero', 3:'Marzo', 4:'Abril', 5:'Mayo', 6:'Junio',
+                    7:'Julio', 8:'Agosto', 9:'Septiembre', 10:'Octubre', 11:'Noviembre', 12:'Diciembre'}
+        
+        df['Mes_Ingreso'] = df['Fecha_Ingreso_DT'].dt.month.map(meses_es).fillna("Sin Mes")
+        
+        # Conversión de valores numéricos para KPIs
         columnas_num = ['Valor_Neto_Ingresado', 'Impuestos_Ingresados', 'TOTAL', 
                         'Cantidad_Ingresada', 'Peso_Ingresado', 'Valor_Neto_Facturado', 
                         'Cantidad_Facturada', 'Peso_Facturado']
@@ -65,108 +74,107 @@ def descargar_datos_maestros(file_id):
         st.error(f"❌ Error al descargar e interpretar el Excel de Drive: {e}")
         return pd.DataFrame()
 
-# --- 3. CARGA DE DATOS INICIAL ---
-# ID real del archivo 'REPORTE_CONCILIACION_BEES_FINAL.xlsx' en tu Drive
-FILE_ID_EXCEL = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"  # Reemplazar si el ID cambia
+# --- 3. INGESTACIÓN DE DATOS ---
+FILE_ID_EXCEL = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"
 
-st.title("📊 Dashboard de Conciliación Operativa - BEES")
-st.markdown("Filtra la información en la barra lateral y descarga el reporte a la medida.")
+st.title("📊 Centro de Control y Conciliación - BEES & GENERAL")
 
-# Botón manual en la barra lateral para forzar actualización de datos
-if st.sidebar.button("🔄 Refrescar datos desde Drive"):
+if st.sidebar.button("🔄 Forzar Refresco de Base (Borrar Caché)"):
     st.cache_data.clear()
-    st.sidebar.success("¡Memoria caché limpiada! Cargando última versión...")
+    st.sidebar.success("¡Base sincronizada de nuevo!")
 
 df_raw = descargar_datos_maestros(FILE_ID_EXCEL)
 
-if df_raw.empty:
-    st.warning("No se pudieron cargar datos. Asegúrate de configurar las credenciales de la cuenta de servicio.")
-else:
-    # --- 4. CREACIÓN DE FILTROS EN LA BARRA LATERAL (SIDEBAR) ---
-    st.sidebar.header("🎛️ Filtros de Búsqueda")
+if not df_raw.empty:
+    # --- 4. FILTROS DINÁMICOS LATERALES (RÁPIDOS E INSTANTÁNEOS) ---
+    st.sidebar.header("🎛️ Segmentadores de Datos")
     
-    # Filtro por Rango de Fechas (Garantizando orden cronológico interno)
-    # Convertimos temporalmente a datetime solo para el widget de selección
-    df_raw['_Fecha_Ingreso_DT'] = pd.to_datetime(df_raw['Fecha_Ingreso'], format='%d/%m/%Y', errors='coerce')
-    fecha_min = df_raw['_Fecha_Ingreso_DT'].min() if pd.notna(df_raw['_Fecha_Ingreso_DT'].min()) else None
-    fecha_max = df_raw['_Fecha_Ingreso_DT'].max() if pd.notna(df_raw['_Fecha_Ingreso_DT'].max()) else None
+    # Filtro de Meses (Simulando "Fecha_Ingreso (mes)" de tu Excel)
+    meses_disponibles = ['Todos'] + list(df_raw['Mes_Ingreso'].unique())
+    mes_sel = st.sidebar.selectbox("Fecha_Ingreso (mes)", options=meses_disponibles, index=0)
     
-    if fecha_min and fecha_max:
-        rango_fecha = st.sidebar.date_input("Rango de Fecha (Ingreso)", [fecha_min, fecha_max])
-    else:
-        rango_fecha = None
-
-    # Filtros categóricos
+    # Filtro de Zonas
     zonas_disponibles = sorted(df_raw['Zona_OfVta'].dropna().unique())
-    zona_sel = st.sidebar.multiselect("Zona de Venta", options=zonas_disponibles)
+    zona_sel = st.sidebar.multiselect("Zona_OfVta", options=zonas_disponibles)
     
-    tipos_disponibles = sorted(df_raw['Tipo_Pedido'].dropna().unique())
-    tipo_sel = st.sidebar.multiselect("Tipo de Pedido", options=tipos_disponibles)
-    
-    # Filtros por búsqueda de texto
-    buscar_pedido = st.sidebar.text_input("Buscar ID Pedido (Exacto o Parcial)").strip()
-    buscar_cliente = st.sidebar.text_input("Buscar Código Cliente").strip()
+    # Filtro de Motivos de Devolución
+    motivos_disponibles = sorted(df_raw['Motivo_Devolucion'].dropna().unique())
+    motivo_sel = st.sidebar.multiselect("Motivo_Devolucion", options=motivos_disponibles)
 
-    # --- 5. APLICACIÓN LOGICA DE FILTROS ---
+    # --- 5. EJECUCIÓN INMEDIATA DEL FILTRADO EN MEMORIA ---
     df_filtrado = df_raw.copy()
     
-    # Filtro por fecha
-    if rango_fecha and len(rango_fecha) == 2:
-        df_filtrado = df_filtrado[
-            (df_filtrado['_Fecha_Ingreso_DT'].dt.date >= rango_fecha[0]) & 
-            (df_filtrado['_Fecha_Ingreso_DT'].dt.date <= rango_fecha[1])
-        ]
-        
-    # Filtros multiselect
+    if mes_sel != 'Todos':
+        df_filtrado = df_filtrado[df_filtrado['Mes_Ingreso'] == mes_sel]
     if zona_sel:
         df_filtrado = df_filtrado[df_filtrado['Zona_OfVta'].isin(zona_sel)]
-    if tipo_sel:
-        df_filtrado = df_filtrado[df_filtrado['Tipo_Pedido'].isin(tipo_sel)]
+    if motivo_sel:
+        df_filtrado = df_filtrado[df_filtrado['Motivo_Devolucion'].isin(motivo_sel)]
+
+    # --- 6. DISEÑO DE PESTAÑAS (TABS) PARA CUIDAR LA VELOCIDAD DE RENDERIZADO ---
+    tab_resumen, tab_detalles = st.tabs(["📊 Vista Tablas Dinámicas", "📋 Base de Datos Estructural"])
+
+    with tab_resumen:
+        st.markdown(f"**Filtros Activos:** Mes: `{mes_sel}` | Zonas: `{len(zona_sel) if zona_sel else 'Todas'}` | Devoluciones: `{len(motivo_sel) if motivo_sel else 'Todas'}`")
         
-    # Filtros de texto libre
-    if buscar_pedido:
-        df_filtrado = df_filtrado[df_filtrado['ID_Pedido_Ingresado'].astype(str).str.contains(buscar_pedido)]
-    if buscar_cliente:
-        df_filtrado = df_filtrado[df_filtrado['Codigo_Cliente'].astype(str).str.contains(buscar_cliente)]
+        # Separación física en 2 columnas frente a frente como en tu Excel
+        col_general, col_bees = st.columns(2)
         
-    # Limpiamos la columna temporal de fechas de procesamiento
-    df_filtrado = df_filtrado.drop(columns=['_Fecha_Ingreso_DT'], errors='ignore')
+        # --- COLUMNA 1: PEDIDOS ENTREGADOS GENERAL ---
+        with col_general:
+            st.markdown("<h3 style='text-align: center; color: #FFF; background-color: #4A3B5C; padding: 5px; border-radius: 5px;'>PEDIDOS ENTREGADOS GENERAL</h3>", unsafe_allow_html=True)
+            df_gen = df_filtrado[df_filtrado['Tipo_Pedido'] == 'GENERAL']
+            
+            if not df_gen.empty:
+                # Agrupación por Fecha de Facturación y conteo único de Pedidos
+                pivot_gen = df_gen.groupby('Fecha_Facturacion').agg(
+                    CANTIDAD_DE_PEDIDOS=('ID_Pedido_Ingresado', 'nunique')
+                ).reset_index()
+                
+                # Renombrar columnas para la visualización limpia
+                pivot_gen.columns = ['FECHA DE FACTURACIÓN', 'CANTIDAD DE PEDIDOS']
+                st.dataframe(pivot_gen, use_container_width=True, hide_index=True)
+                
+                # Totalizador al pie de la tabla
+                st.markdown(f"**Total general:** `{df_gen['ID_Pedido_Ingresado'].nunique():,}` Pedidos Únicos")
+            else:
+                st.info("No hay datos que coincidan con los filtros para el canal GENERAL.")
 
-    # --- 6. INDICADORES CLAVE (KPIs EXECUTIVOS) ---
-    st.subheader("📈 Resumen Ejecutivo del Filtro")
-    
-    total_solicitado = df_filtrado['TOTAL'].sum()
-    total_facturado = df_filtrado['Valor_Neto_Facturado'].sum()
-    
-    cant_ingresada = df_filtrado['Cantidad_Ingresada'].sum()
-    cant_facturada = df_filtrado['Cantidad_Facturada'].sum()
-    fill_rate = (cant_facturada / cant_ingresada * 100) if cant_ingresada > 0 else 0
-    
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Total Ingresado (S/.)", f"S/. {total_solicitado:,.2f}")
-    kpi2.metric("Total Facturado (S/.)", f"S/. {total_facturado:,.2f}")
-    kpi3.metric("Registros Visibles", f"{len(df_filtrado):,}")
-    kpi4.metric("Fill Rate Cantidades", f"{fill_rate:.2f}%")
-    
-    st.markdown("---")
+        # --- COLUMNA 2: PEDIDOS ENTREGADOS BEES ---
+        with col_bees:
+            st.markdown("<h3 style='text-align: center; color: #FFF; background-color: #4A3B5C; padding: 5px; border-radius: 5px;'>PEDIDOS ENTREGADOS BEES</h3>", unsafe_allow_html=True)
+            df_bees = df_filtrado[df_filtrado['Tipo_Pedido'] == 'PEDIDO BEES']
+            
+            if not df_bees.empty:
+                # Agrupación por Fecha de Facturación y conteo único de Pedidos
+                pivot_bees = df_bees.groupby('Fecha_Facturacion').agg(
+                    CANTIDAD_DE_PEDIDOS=('ID_Pedido_Ingresado', 'nunique')
+                ).reset_index()
+                
+                pivot_bees.columns = ['FECHA DE FACTURACIÓN', 'CANTIDAD DE PEDIDOS']
+                st.dataframe(pivot_bees, use_container_width=True, hide_index=True)
+                
+                # Totalizador al pie de la tabla
+                st.markdown(f"**Total general:** `{df_bees['ID_Pedido_Ingresado'].nunique():,}` Pedidos Únicos")
+            else:
+                st.info("No hay datos que coincidan con los filtros para el canal BEES.")
 
-    # --- 7. BOTÓN DE DESCARGA EXCLUSIVA DE DATOS FILTRADOS ---
-    col_vacia, col_boton = st.columns([4, 1])
-    
-    # Procesamos la descarga a Excel solo sobre las líneas visibles (filtradas)
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_filtrado.to_excel(writer, index=False)
-    bytes_excel = output.getvalue()
-    
-    col_boton.download_button(
-        label="📥 Descargar Excel Filtrado",
-        data=bytes_excel,
-        file_name="CONCILIACION_FILTRADA_BEES.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-
-    # --- 8. VISUALIZACIÓN DE LA TABLA MAESTRA ---
-    st.subheader("📋 Matriz de Datos")
-    st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
+    with tab_detalles:
+        st.subheader("Base de Conciliación Completa (Filtrada)")
+        
+        # Botón de Descarga exclusiva de lo seleccionado
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_filtrado.drop(columns=['Fecha_Ingreso_DT', 'Mes_Ingreso'], errors='ignore').to_excel(writer, index=False)
+        bytes_excel = output.getvalue()
+        
+        st.download_button(
+            label="📥 Descargar Base Filtrada a Excel",
+            data=bytes_excel,
+            file_name="CONCILIACION_FILTRADA_EXCEL.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        # Muestra la matriz completa limpia
+        df_visual = df_filtrado.drop(columns=['Fecha_Ingreso_DT', 'Mes_Ingreso'], errors='ignore')
+        st.dataframe(df_visual, use_container_width=True, hide_index=True)
