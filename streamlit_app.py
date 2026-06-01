@@ -40,7 +40,7 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        # Carga rápida mapeando tipos estrictos como texto
+        # Carga rápida mapeando tipos estrictos como texto puro
         df = pd.read_excel(fh, dtype={
             'Fecha_Ingreso': str,
             'Fecha_Facturacion': str,
@@ -53,15 +53,16 @@ def descargar_datos_maestros(file_id):
             'Tipo_Pedido': str
         })
         
-        # ⚡ OPTIMIZACIÓN CRÍTICA DE VELOCIDAD: Procesar fechas y meses dentro del caché (Una sola vez)
+        # ⚡ PROCESAMIENTO CRÍTICO DE FECHAS EN CACHÉ (Para ordenar cronológicamente)
         df['Fecha_Ingreso_DT'] = pd.to_datetime(df['Fecha_Ingreso'], format='%d/%m/%Y', errors='coerce')
+        df['Fecha_Facturacion_DT'] = pd.to_datetime(df['Fecha_Facturacion'].astype(str).str.strip(), format='%d/%m/%Y', errors='coerce')
         
         meses_es = {1:'Enero', 2:'Febrero', 3:'Marzo', 4:'Abril', 5:'Mayo', 6:'Junio',
                     7:'Julio', 8:'Agosto', 9:'Septiembre', 10:'Octubre', 11:'Noviembre', 12:'Diciembre'}
         
         df['Mes_Ingreso'] = df['Fecha_Ingreso_DT'].dt.month.map(meses_es).fillna("Sin Mes")
         
-        # Conversión de valores numéricos para KPIs
+        # Conversión de valores numéricos para cálculos
         columnas_num = ['Valor_Neto_Ingresado', 'Impuestos_Ingresados', 'TOTAL', 
                         'Cantidad_Ingresada', 'Peso_Ingresado', 'Valor_Neto_Facturado', 
                         'Cantidad_Facturada', 'Peso_Facturado']
@@ -86,22 +87,19 @@ if st.sidebar.button("🔄 Forzar Refresco de Base (Borrar Caché)"):
 df_raw = descargar_datos_maestros(FILE_ID_EXCEL)
 
 if not df_raw.empty:
-    # --- 4. FILTROS DINÁMICOS LATERALES (RÁPIDOS E INSTANTÁNEOS) ---
+    # --- 4. FILTROS DINÁMICOS LATERALES ---
     st.sidebar.header("🎛️ Segmentadores de Datos")
     
-    # Filtro de Meses (Simulando "Fecha_Ingreso (mes)" de tu Excel)
     meses_disponibles = ['Todos'] + list(df_raw['Mes_Ingreso'].unique())
     mes_sel = st.sidebar.selectbox("Fecha_Ingreso (mes)", options=meses_disponibles, index=0)
     
-    # Filtro de Zonas
     zonas_disponibles = sorted(df_raw['Zona_OfVta'].dropna().unique())
     zona_sel = st.sidebar.multiselect("Zona_OfVta", options=zonas_disponibles)
     
-    # Filtro de Motivos de Devolución
     motivos_disponibles = sorted(df_raw['Motivo_Devolucion'].dropna().unique())
     motivo_sel = st.sidebar.multiselect("Motivo_Devolucion", options=motivos_disponibles)
 
-    # --- 5. EJECUCIÓN INMEDIATA DEL FILTRADO EN MEMORIA ---
+    # --- 5. FILTRADO EN MEMORIA ---
     df_filtrado = df_raw.copy()
     
     if mes_sel != 'Todos':
@@ -111,13 +109,12 @@ if not df_raw.empty:
     if motivo_sel:
         df_filtrado = df_filtrado[df_filtrado['Motivo_Devolucion'].isin(motivo_sel)]
 
-    # --- 6. DISEÑO DE PESTAÑAS (TABS) PARA CUIDAR LA VELOCIDAD DE RENDERIZADO ---
+    # --- 6. PESTAÑAS DE TRABAJO ---
     tab_resumen, tab_detalles = st.tabs(["📊 Vista Tablas Dinámicas", "📋 Base de Datos Estructural"])
 
     with tab_resumen:
         st.markdown(f"**Filtros Activos:** Mes: `{mes_sel}` | Zonas: `{len(zona_sel) if zona_sel else 'Todas'}` | Devoluciones: `{len(motivo_sel) if motivo_sel else 'Todas'}`")
         
-        # Separación física en 2 columnas frente a frente como en tu Excel
         col_general, col_bees = st.columns(2)
         
         # --- COLUMNA 1: PEDIDOS ENTREGADOS GENERAL ---
@@ -126,19 +123,19 @@ if not df_raw.empty:
             df_gen = df_filtrado[df_filtrado['Tipo_Pedido'] == 'GENERAL']
             
             if not df_gen.empty:
-                # Agrupación por Fecha de Facturación y conteo único de Pedidos
-                pivot_gen = df_gen.groupby('Fecha_Facturacion').agg(
+                # 🌟 SOLUCIÓN: Agrupamos incluyendo la fecha DT interna para obligar el orden cronológico estricto
+                pivot_gen = df_gen.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion']).agg(
                     CANTIDAD_DE_PEDIDOS=('ID_Pedido_Ingresado', 'nunique')
-                ).reset_index()
+                ).reset_index().sort_values('Fecha_Facturacion_DT')
                 
-                # Renombrar columnas para la visualización limpia
+                pivot_gen = pivot_gen[['Fecha_Facturacion', 'CANTIDAD_DE_PEDIDOS']]
                 pivot_gen.columns = ['FECHA DE FACTURACIÓN', 'CANTIDAD DE PEDIDOS']
-                st.dataframe(pivot_gen, use_container_width=True, hide_index=True)
                 
-                # Totalizador al pie de la tabla
+                # 🌟 NUEVO ESTÁNDAR: Reemplazado 'use_container_width' por 'width' para limpiar logs
+                st.dataframe(pivot_gen, width='stretch', hide_index=True)
                 st.markdown(f"**Total general:** `{df_gen['ID_Pedido_Ingresado'].nunique():,}` Pedidos Únicos")
             else:
-                st.info("No hay datos que coincidan con los filtros para el canal GENERAL.")
+                st.info("No hay datos para el canal GENERAL.")
 
         # --- COLUMNA 2: PEDIDOS ENTREGADOS BEES ---
         with col_bees:
@@ -146,26 +143,30 @@ if not df_raw.empty:
             df_bees = df_filtrado[df_filtrado['Tipo_Pedido'] == 'PEDIDO BEES']
             
             if not df_bees.empty:
-                # Agrupación por Fecha de Facturación y conteo único de Pedidos
-                pivot_bees = df_bees.groupby('Fecha_Facturacion').agg(
+                # 🌟 SOLUCIÓN: Agrupamos incluyendo la fecha DT interna para obligar el orden cronológico estricto
+                pivot_bees = df_bees.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion']).agg(
                     CANTIDAD_DE_PEDIDOS=('ID_Pedido_Ingresado', 'nunique')
-                ).reset_index()
+                ).reset_index().sort_values('Fecha_Facturacion_DT')
                 
+                pivot_bees = pivot_bees[['Fecha_Facturacion', 'CANTIDAD_DE_PEDIDOS']]
                 pivot_bees.columns = ['FECHA DE FACTURACIÓN', 'CANTIDAD DE PEDIDOS']
-                st.dataframe(pivot_bees, use_container_width=True, hide_index=True)
                 
-                # Totalizador al pie de la tabla
+                # 🌟 NUEVO ESTÁNDAR: Reemplazado 'use_container_width' por 'width' para limpiar logs
+                st.dataframe(pivot_bees, width='stretch', hide_index=True)
                 st.markdown(f"**Total general:** `{df_bees['ID_Pedido_Ingresado'].nunique():,}` Pedidos Únicos")
             else:
-                st.info("No hay datos que coincidan con los filtros para el canal BEES.")
+                st.info("No hay datos para el canal BEES.")
 
     with tab_detalles:
         st.subheader("Base de Conciliación Completa (Filtrada)")
         
-        # Botón de Descarga exclusiva de lo seleccionado
+        # Descarga limpia sin columnas temporales de ordenamiento
+        columnas_descarte = ['Fecha_Ingreso_DT', 'Fecha_Facturacion_DT', 'Mes_Ingreso']
+        df_descarga = df_filtrado.drop(columns=columnas_descarte, errors='ignore')
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_filtrado.drop(columns=['Fecha_Ingreso_DT', 'Mes_Ingreso'], errors='ignore').to_excel(writer, index=False)
+            df_descarga.to_excel(writer, index=False)
         bytes_excel = output.getvalue()
         
         st.download_button(
@@ -175,6 +176,4 @@ if not df_raw.empty:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        # Muestra la matriz completa limpia
-        df_visual = df_filtrado.drop(columns=['Fecha_Ingreso_DT', 'Mes_Ingreso'], errors='ignore')
-        st.dataframe(df_visual, use_container_width=True, hide_index=True)
+        st.dataframe(df_descarga, width='stretch', hide_index=True)
