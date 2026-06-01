@@ -67,7 +67,7 @@ def descargar_datos_maestros(file_id):
 
 # --- 3. CARGA DE DATOS INICIAL ---
 # ID real del archivo 'REPORTE_CONCILIACION_BEES_FINAL.xlsx' en tu Drive
-FILE_ID_EXCEL = "1OLFaCt9fbsuA8v7EUFeh5-4KzzCHy2Uz"  # Reemplazar si el ID cambia
+FILE_ID_EXCEL = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"  # Reemplazar si el ID cambia
 
 st.title("📊 Dashboard de Conciliación Operativa - BEES")
 st.markdown("Filtra la información en la barra lateral y descarga el reporte a la medida.")
