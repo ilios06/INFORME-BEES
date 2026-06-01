@@ -98,10 +98,10 @@ else:
 
     # Filtros categóricos
     zonas_disponibles = sorted(df_raw['Zona_OfVta'].dropna().unique())
-    zona_sel = st.sidebar.multiselect("Zona de Venta", opciones=zonas_disponibles)
+    zona_sel = st.sidebar.multiselect("Zona de Venta", options=zonas_disponibles)
     
     tipos_disponibles = sorted(df_raw['Tipo_Pedido'].dropna().unique())
-    tipo_sel = st.sidebar.multiselect("Tipo de Pedido", opciones=tipos_disponibles)
+    tipo_sel = st.sidebar.multiselect("Tipo de Pedido", options=tipos_disponibles)
     
     # Filtros por búsqueda de texto
     buscar_pedido = st.sidebar.text_input("Buscar ID Pedido (Exacto o Parcial)").strip()
