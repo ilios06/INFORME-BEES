@@ -28,13 +28,17 @@ def obtener_servicio_drive():
 # --- 2. DESCARGA Y CACHÉ DE DATOS ---
 @st.cache_data(ttl=3600)  # El caché se limpia automáticamente cada hora
 def descargar_datos_maestros(file_id):
-    """Descarga el archivo Excel desde Google Drive y lo carga en memoria"""
+    """Descarga un Google Sheet nativo convirtiéndolo dinámicamente a Excel"""
     service = obtener_servicio_drive()
     if not service:
         return pd.DataFrame()
         
     try:
-        request = service.files().get_media(fileId=file_id)
+        # 🌟 EL CAMBIO CLAVE: Usamos export_media en lugar de get_media indicando el formato Excel
+        request = service.files().export_media(
+            fileId=file_id, 
+            mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
@@ -42,7 +46,7 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        # IMPORTANTE: Forzamos dtype=str en las fechas para que no se inviertan al leerlas
+        # Leemos las columnas respetando los formatos de texto originales
         df = pd.read_excel(fh, dtype={
             'Fecha_Ingreso': str,
             'Fecha_Facturacion': str,
@@ -52,7 +56,6 @@ def descargar_datos_maestros(file_id):
             'Codigo_Cliente': str
         })
         
-        # Convertimos las columnas numéricas para poder hacer sumas y KPIs
         columnas_num = ['Valor_Neto_Ingresado', 'Impuestos_Ingresados', 'TOTAL', 
                         'Cantidad_Ingresada', 'Peso_Ingresado', 'Valor_Neto_Facturado', 
                         'Cantidad_Facturada', 'Peso_Facturado']
@@ -62,7 +65,7 @@ def descargar_datos_maestros(file_id):
                 
         return df
     except Exception as e:
-        st.error(f"❌ Error al descargar el archivo de Drive: {e}")
+        st.error(f"❌ Error al exportar e interpretar el Google Sheet de Drive: {e}")
         return pd.DataFrame()
 
 # --- 3. CARGA DE DATOS INICIAL ---
