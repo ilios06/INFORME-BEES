@@ -1,0 +1,5 @@
+pandas
+numpy
+openpyxl
+gspread
+google-api-python-client
