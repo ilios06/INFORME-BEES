@@ -8,7 +8,7 @@ import io
 
 # --- CONFIGURACIÓN DE LA PÁGINA WEB ---
 st.set_page_config(
-    page_title="Dashboard de Conciliación BEES",
+    page_title="Dashboard de Conciliación BEES & GENERAL",
     page_icon="📊",
     layout="wide"
 )
@@ -40,10 +40,9 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        # Carga rápida mapeando tipos estrictos como texto puro
+        # ⚡ OPTIMIZACIÓN: Se remueven las fechas del dtype estricto para evitar 
+        # que Pandas convierta las celdas nativas de fecha de Excel a strings con '00:00:00'
         df = pd.read_excel(fh, dtype={
-            'Fecha_Ingreso': str,
-            'Fecha_Facturacion': str,
             'ID_Pedido_Ingresado': str,
             'ID_Factura_Final': str,
             'SKU_Material_Ingresado': str,
@@ -53,16 +52,28 @@ def descargar_datos_maestros(file_id):
             'Tipo_Pedido': str
         })
         
-        # ⚡ PROCESAMIENTO CRÍTICO DE FECHAS EN CACHÉ (Para ordenar cronológicamente)
-        df['Fecha_Ingreso_DT'] = pd.to_datetime(df['Fecha_Ingreso'], format='%d/%m/%Y', errors='coerce')
-        df['Fecha_Facturacion_DT'] = pd.to_datetime(df['Fecha_Facturacion'].astype(str).str.strip(), format='%d/%m/%Y', errors='coerce')
+        # ⚡ PROCESAMIENTO CRÍTICO DE FECHAS EN CACHÉ (Solución al formato Año/Mes/Día H:M:S)
+        for col in ['Fecha_Ingreso', 'Fecha_Facturacion']:
+            if col in df.columns:
+                # Detección inteligente si ya viene formateada como datetime por pandas
+                if pd.api.types.is_datetime64_any_dtype(df[col]):
+                    df[f'{col}_DT'] = df[col]
+                else:
+                    df[f'{col}_DT'] = pd.to_datetime(df[col].astype(str).str.strip(), errors='coerce', dayfirst=True)
+                
+                # MÁSCARA CRONOLÓGICA PURA: Fuerza visualización exacta DD/MM/YYYY eliminando horas
+                df[f'{col}_TXT'] = df[f'{col}_DT'].dt.strftime('%d/%m/%Y').fillna(df[col].astype(str).str.split(' ').str[0])
+            else:
+                df[f'{col}_DT'] = pd.NaT
+                df[f'{col}_TXT'] = "Sin Fecha"
         
+        # Asignación del mes en español en función de la Fecha de Ingreso limpia
         meses_es = {1:'Enero', 2:'Febrero', 3:'Marzo', 4:'Abril', 5:'Mayo', 6:'Junio',
                     7:'Julio', 8:'Agosto', 9:'Septiembre', 10:'Octubre', 11:'Noviembre', 12:'Diciembre'}
         
         df['Mes_Ingreso'] = df['Fecha_Ingreso_DT'].dt.month.map(meses_es).fillna("Sin Mes")
         
-        # Conversión de valores numéricos para cálculos
+        # Conversión controlada de valores numéricos para análisis financiero
         columnas_num = ['Valor_Neto_Ingresado', 'Impuestos_Ingresados', 'TOTAL', 
                         'Cantidad_Ingresada', 'Peso_Ingresado', 'Valor_Neto_Facturado', 
                         'Cantidad_Facturada', 'Peso_Facturado']
@@ -90,6 +101,7 @@ if not df_raw.empty:
     # --- 4. FILTROS DINÁMICOS LATERALES ---
     st.sidebar.header("🎛️ Segmentadores de Datos")
     
+    # Filtro por Mes de la Fecha de Ingreso
     meses_disponibles = ['Todos'] + list(df_raw['Mes_Ingreso'].unique())
     mes_sel = st.sidebar.selectbox("Fecha_Ingreso (mes)", options=meses_disponibles, index=0)
     
@@ -109,8 +121,37 @@ if not df_raw.empty:
     if motivo_sel:
         df_filtrado = df_filtrado[df_filtrado['Motivo_Devolucion'].isin(motivo_sel)]
 
+    # --- 5.1 CÁLCULO DE MÉTRICAS Y DEVOLUCIONES (COLUMNA S / MOTIVO_DEVOLUCION) ---
+    total_pedidos_unicos = df_filtrado['ID_Pedido_Ingresado'].nunique()
+    total_clientes_unicos = df_filtrado['Codigo_Cliente'].nunique()
+    total_dinero = df_filtrado['TOTAL'].sum()
+    
+    # Identificación de devoluciones: registros con contenido válido en Motivo_Devolucion
+    condicion_devuelto = (
+        df_filtrado['Motivo_Devolucion'].notna() & 
+        (df_filtrado['Motivo_Devolucion'].astype(str).str.strip() != '') & 
+        (df_filtrado['Motivo_Devolucion'].astype(str).str.upper() != 'NAN')
+    )
+    df_devoluciones = df_filtrado[condicion_devuelto]
+    pedidos_devueltos_unicos = df_devoluciones['ID_Pedido_Ingresado'].nunique()
+    dinero_devuelto = df_devoluciones['TOTAL'].sum()
+
+    # --- 5.2 RENDER DE TARJETAS DE INDICADORES MACRO ---
+    st.markdown("### 📈 Resumen de Operación Monetaria y Volúmenes")
+    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+    kpi1.metric("📦 Pedidos Únicos", f"{total_pedidos_unicos:,}")
+    kpi2.metric("👥 Clientes Únicos", f"{total_clientes_unicos:,}")
+    kpi3.metric("💰 TOTAL Facturado", f"S/. {total_dinero:,.2f}")
+    kpi4.metric("🔄 Pedidos Devueltos", f"{pedidos_devueltos_unicos:,}")
+    kpi5.metric("📉 Dinero Devuelto", f"S/. {dinero_devuelto:,.2f}")
+    st.markdown("---")
+
     # --- 6. PESTAÑAS DE TRABAJO ---
-    tab_resumen, tab_detalles = st.tabs(["📊 Vista Tablas Dinámicas", "📋 Base de Datos Estructural"])
+    tab_resumen, tab_cronologia, tab_detalles = st.tabs([
+        "📊 Vista Tablas Dinámicas", 
+        "📅 Segmento Cronológico por Día", 
+        "📋 Base de Datos Estructural"
+    ])
 
     with tab_resumen:
         st.markdown(f"**Filtros Activos:** Mes: `{mes_sel}` | Zonas: `{len(zona_sel) if zona_sel else 'Todas'}` | Devoluciones: `{len(motivo_sel) if motivo_sel else 'Todas'}`")
@@ -123,15 +164,14 @@ if not df_raw.empty:
             df_gen = df_filtrado[df_filtrado['Tipo_Pedido'] == 'GENERAL']
             
             if not df_gen.empty:
-                # 🌟 SOLUCIÓN: Agrupamos incluyendo la fecha DT interna para obligar el orden cronológico estricto
-                pivot_gen = df_gen.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion']).agg(
+                # Se agrupa por la fecha DT interna de ordenamiento pero se muestra la TXT formateada
+                pivot_gen = df_gen.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion_TXT']).agg(
                     CANTIDAD_DE_PEDIDOS=('ID_Pedido_Ingresado', 'nunique')
                 ).reset_index().sort_values('Fecha_Facturacion_DT')
                 
-                pivot_gen = pivot_gen[['Fecha_Facturacion', 'CANTIDAD_DE_PEDIDOS']]
+                pivot_gen = pivot_gen[['Fecha_Facturacion_TXT', 'CANTIDAD_DE_PEDIDOS']]
                 pivot_gen.columns = ['FECHA DE FACTURACIÓN', 'CANTIDAD DE PEDIDOS']
                 
-                # 🌟 NUEVO ESTÁNDAR: Reemplazado 'use_container_width' por 'width' para limpiar logs
                 st.dataframe(pivot_gen, width='stretch', hide_index=True)
                 st.markdown(f"**Total general:** `{df_gen['ID_Pedido_Ingresado'].nunique():,}` Pedidos Únicos")
             else:
@@ -143,25 +183,49 @@ if not df_raw.empty:
             df_bees = df_filtrado[df_filtrado['Tipo_Pedido'] == 'PEDIDO BEES']
             
             if not df_bees.empty:
-                # 🌟 SOLUCIÓN: Agrupamos incluyendo la fecha DT interna para obligar el orden cronológico estricto
-                pivot_bees = df_bees.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion']).agg(
+                pivot_bees = df_bees.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion_TXT']).agg(
                     CANTIDAD_DE_PEDIDOS=('ID_Pedido_Ingresado', 'nunique')
                 ).reset_index().sort_values('Fecha_Facturacion_DT')
                 
-                pivot_bees = pivot_bees[['Fecha_Facturacion', 'CANTIDAD_DE_PEDIDOS']]
+                pivot_bees = pivot_bees[['Fecha_Facturacion_TXT', 'CANTIDAD_DE_PEDIDOS']]
                 pivot_bees.columns = ['FECHA DE FACTURACIÓN', 'CANTIDAD DE PEDIDOS']
                 
-                # 🌟 NUEVO ESTÁNDAR: Reemplazado 'use_container_width' por 'width' para limpiar logs
                 st.dataframe(pivot_bees, width='stretch', hide_index=True)
                 st.markdown(f"**Total general:** `{df_bees['ID_Pedido_Ingresado'].nunique():,}` Pedidos Únicos")
             else:
                 st.info("No hay datos para el canal BEES.")
 
+    # --- PESTAÑA NUEVA: SEGMENTO CRONOLÓGICO DINÁMICO ---
+    with tab_cronologia:
+        st.subheader(f"📊 Distribución de Operaciones - Mes Seleccionado: {mes_sel}")
+        
+        if not df_filtrado.empty:
+            # Agrupación master diaria para el reporte dinámico
+            pivot_diario = df_filtrado.groupby(['Fecha_Facturacion_DT', 'Fecha_Facturacion_TXT']).agg(
+                Pedidos_Unicos=('ID_Pedido_Ingresado', 'nunique'),
+                Clientes_Unicos=('Codigo_Cliente', 'nunique'),
+                Monto_Total=('TOTAL', 'sum')
+            ).reset_index().sort_values('Fecha_Facturacion_DT')
+            
+            # Gráfico de barras interactivo de volumen de pedidos
+            st.markdown("**Volumen de Pedidos Únicos por Día**")
+            chart_data = pivot_diario.set_index('Fecha_Facturacion_TXT')['Pedidos_Unicos']
+            st.bar_chart(chart_data, color="#4A3B5C")
+            
+            # Tabla interactiva en formato lista
+            st.markdown("**Lista de Control de Negocio Diaria**")
+            pivot_diario_display = pivot_diario[['Fecha_Facturacion_TXT', 'Pedidos_Unicos', 'Clientes_Unicos', 'Monto_Total']]
+            pivot_diario_display.columns = ['FECHA', 'PEDIDOS ÚNICOS', 'CLIENTES ÚNICOS', 'MONTO FACTURADO (S/.)']
+            
+            st.dataframe(pivot_diario_display, width='stretch', hide_index=True)
+        else:
+            st.warning("Selecciona filtros válidos para visualizar la cronología.")
+
     with tab_detalles:
         st.subheader("Base de Conciliación Completa (Filtrada)")
         
-        # Descarga limpia sin columnas temporales de ordenamiento
-        columnas_descarte = ['Fecha_Ingreso_DT', 'Fecha_Facturacion_DT', 'Mes_Ingreso']
+        # Descarga limpia sin columnas de trabajo internas
+        columnas_descarte = ['Fecha_Ingreso_DT', 'Fecha_Facturacion_DT', 'Fecha_Ingreso_TXT', 'Fecha_Facturacion_TXT', 'Mes_Ingreso']
         df_descarga = df_filtrado.drop(columns=columnas_descarte, errors='ignore')
         
         output = io.BytesIO()
