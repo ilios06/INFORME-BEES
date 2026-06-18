@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
 import io
+import unicodedata
 
 # --- CONFIGURACIÓN DE LA PÁGINA WEB ---
 st.set_page_config(
@@ -30,7 +31,7 @@ def obtener_servicio_drive():
         st.error(f"❌ Error de autenticación: Verifica st.secrets. Detalles: {e}")
         return None
 
-# --- 2. DESCARGA Y OPTIMIZACIÓN DE CACHÉ DE DATOS (TU MATRIZ BASE) ---
+# --- 2. DESCARGA Y OPTIMIZACIÓN DE CACHÉ DE DATOS ---
 @st.cache_data(ttl=3600)
 def descargar_datos_maestros(file_id):
     service = obtener_servicio_drive()
@@ -46,7 +47,7 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        # Carga rápida mapeando tipos estrictos como texto puro (Tu configuración original)
+        # Carga estricta mapeando tipos como texto puro para evitar deformaciones
         df = pd.read_excel(fh, dtype={
             'ID_Pedido_Ingresado': str,
             'ID_Factura_Final': str,
@@ -65,19 +66,26 @@ def descargar_datos_maestros(file_id):
                 else:
                     df[f'{col}_DT'] = pd.to_datetime(df[col].astype(str).str.strip(), format='%d/%m/%Y', errors='coerce')
                 
-                # Renderizado exacto de texto original sin horas
+                # Renderizado exacto de texto original de origen sin marcas de tiempo
                 df[f'{col}_TXT'] = df[f'{col}_DT'].dt.strftime('%d/%m/%Y').fillna(df[col].astype(str).str.split(' ').str[0])
             else:
                 df[f'{col}_DT'] = pd.NaT
                 df[f'{col}_TXT'] = "Sin Fecha"
         
         meses_es = {1:'Enero', 2:'Febrero', 3:'Marzo', 4:'Abril', 5:'Mayo', 6:'Junio',
-                    7:'Julio', 8:'Agosto', 9:'Septiembre', 100:'Octubre', 11:'Noviembre', 12:'Diciembre'}
+                    7:'Julio', 8:'Agosto', 9:'Septiembre', 10:'Octubre', 11:'Noviembre', 12:'Diciembre'}
         
-        # 🌟 EXCEPCIÓN DE FECHAS: Se estructuran ambos meses de forma independiente
         df['Mes_Ingreso'] = df['Fecha_Ingreso_DT'].dt.month.map(meses_es).fillna("Sin Mes")
         df['Mes_Facturacion'] = df['Fecha_Facturacion_DT'].dt.month.map(meses_es).fillna("Sin Mes")
         
+        # 🧼 ESCUDO DE NORMALIZACIÓN GEOGRÁFICA (Remueve tildes, espacios y fuerza mayúsculas)
+        if 'Zona_OfVta' in df.columns:
+            df['Zona_OfVta_Clean'] = df['Zona_OfVta'].astype(str).str.strip().str.upper().apply(
+                lambda x: ''.join(c for c in unicodedata.normalize('NFKD', x) if not unicodedata.combining(c))
+            )
+        else:
+            df['Zona_OfVta_Clean'] = "SIN ZONA"
+            
         # Conversión de valores numéricos para cálculos
         columnas_num = ['Valor_Neto_Ingresado', 'Impuestos_Ingresados', 'TOTAL', 
                         'Cantidad_Ingresada', 'Peso_Ingresado', 'Valor_Neto_Facturado', 
@@ -104,13 +112,13 @@ if not df_raw.empty:
         st.markdown("<div style='background-color: #1E1E2E; padding: 15px; border-radius: 10px;'>", unsafe_allow_html=True)
         st.header("🎛️ Panel de Control")
         
-        # Selector de Mes basado en la Fecha de Facturación (Regla General)
+        # Extracción segura de meses disponibles
         meses_validos = sorted([m for m in df_raw['Mes_Facturacion'].unique() if m != "Sin Mes"])
         if not meses_validos:
             meses_validos = sorted([m for m in df_raw['Mes_Ingreso'].unique() if m != "Sin Mes"])
         mes_sel = st.selectbox("📅 Seleccionar Período Mensual", options=meses_validos, index=0)
         
-        # Selector de Región / Zona (Lima vs Arequipa) con tolerancia de texto
+        # Selector de Región / Zona (Lima vs Arequipa)
         opcion_region = st.radio("📍 Filtrar Región Geográfica", ["Lima", "Arequipa", "Ver Todo"], index=2)
         
         # Selector de Vista / Análisis Profundo
@@ -122,11 +130,11 @@ if not df_raw.empty:
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- 5. CORE ENGINE: FILTRADO SEGURO POR REGION ---
+    # --- 5. CORE ENGINE: FILTRADO SEGURO POR REGION NORMALIZADA ---
     if opcion_region == "Lima":
-        df_region = df_raw[df_raw['Zona_OfVta'].astype(str).str.upper().str.contains('LIMA', na=False)]
+        df_region = df_raw[df_raw['Zona_OfVta_Clean'].str.contains('LIMA', na=False)]
     elif opcion_region == "Arequipa":
-        df_region = df_raw[df_raw['Zona_OfVta'].astype(str).str.upper().str.contains('AREQUIPA', na=False)]
+        df_region = df_raw[df_raw['Zona_OfVta_Clean'].str.contains('AREQUIPA', na=False)]
     else:
         df_region = df_raw.copy()
 
@@ -154,7 +162,6 @@ if not df_raw.empty:
             st.title(f"📊 Dashboard Operativo — {mes_sel.upper()} ({opcion_region.upper()})")
             
             # --- 6.1 TRES GRÁFICOS PEQUEÑOS DE PARTICIPACIÓN (PLOTLY EXPRESS) ---
-            # Agrupación por canal usando tus literales exactos: 'GENERAL' y 'PEDIDO BEES'
             df_chart_base = df_facturados_mes.copy()
             df_chart_base['Canal_Visual'] = df_chart_base['Tipo_Pedido'].map({'GENERAL': 'COSTEÑO (GENERAL)', 'PEDIDO BEES': 'BEES'}).fillna(df_chart_base['Tipo_Pedido'])
             
@@ -173,20 +180,20 @@ if not df_raw.empty:
                 with g1:
                     fig1 = px.pie(summary_metrics, values='Pedidos', names='Canal_Visual', hole=0.4,
                                   title="Part. % Pedidos Únicos", color_discrete_sequence=colores_corporativos)
-                    fig1.update_layout(showlegend=False, height=200, margin=dict(t=30, b=0, l=0, r=0))
+                    fig1.update_layout(showlegend=False, height=190, margin=dict(t=30, b=0, l=0, r=0))
                     st.plotly_chart(fig1, use_container_width=True)
                 with g2:
                     fig2 = px.pie(summary_metrics, values='Peso', names='Canal_Visual', hole=0.4,
                                   title="Part. % Peso Ingresado (Kg)", color_discrete_sequence=colores_corporativos)
-                    fig2.update_layout(showlegend=False, height=200, margin=dict(t=30, b=0, l=0, r=0))
+                    fig2.update_layout(showlegend=False, height=190, margin=dict(t=30, b=0, l=0, r=0))
                     st.plotly_chart(fig2, use_container_width=True)
                 with g3:
                     fig3 = px.pie(summary_metrics, values='Dinero', names='Canal_Visual', hole=0.4,
                                   title="Part. % Capital TOTAL (S/.)", color_discrete_sequence=colores_corporativos)
-                    fig3.update_layout(showlegend=False, height=200, margin=dict(t=30, b=0, l=0, r=0))
+                    fig3.update_layout(showlegend=False, height=190, margin=dict(t=30, b=0, l=0, r=0))
                     st.plotly_chart(fig3, use_container_width=True)
                 
-                # Resumen numérico debajo de los gráficos circulares
+                # Resumen numérico directo abajo
                 st.markdown("#### 🔢 Desglose Resumido de Canales")
                 rm1, rm2, rm3 = st.columns(3)
                 for _, row in summary_metrics.iterrows():
@@ -198,7 +205,7 @@ if not df_raw.empty:
             
             st.markdown("---")
             
-            # --- 6.2 INDICADORES CON FÓRMULAS MATEMÁTICAS AVANZADAS ---
+            # --- 6.2 CORRECCIÓN DE KPI Y TYPO (NAMEERROR RESUELTO) ---
             st.markdown("### 🧮 Indicadores de Tracción Comercial (Basado en Facturación)")
             
             def calcular_kpis_estructurales(df_sub_canal):
@@ -213,8 +220,9 @@ if not df_raw.empty:
             df_costeno = df_facturados_mes[df_facturados_mes['Tipo_Pedido'] == 'GENERAL']
             df_bees = df_facturados_mes[df_facturados_mes['Tipo_Pedido'] == 'PEDIDO BEES']
             
-            kp_c_pc, kp_c_tk = calcular_kpis_structurales(df_costeno)
-            kp_b_pc, kp_b_tk = calcular_kpis_structurales(df_bees)
+            # Llamado corregido a la función estructural
+            kp_c_pc, kp_c_tk = calcular_kpis_estructurales(df_costeno)
+            kp_b_pc, kp_b_tk = calcular_kpis_estructurales(df_bees)
             
             card1, card2 = st.columns(2)
             with card1:
@@ -236,7 +244,7 @@ if not df_raw.empty:
                 
             st.markdown("---")
             
-            # --- 6.3 GRÁFICO DE EMBUDO LOGÍSTICO (CONTEOS ÚNICOS) ---
+            # --- 6.3 GRÁFICO DE EMBUDO LOGÍSTICO ---
             st.markdown("### 🌪️ Embudo Logístico de Pedidos Únicos")
             c_ingresados = df_ingresados_mes['ID_Pedido_Ingresado'].nunique()
             c_facturados = df_facturas_validas['ID_Pedido_Ingresado'].nunique()
@@ -248,14 +256,13 @@ if not df_raw.empty:
                 textinfo="value+percent initial",
                 marker={"color": ["#3B2F4C", "#4A3B5C", "#17A2B8"]}
             ))
-            fig_funnel.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=220)
+            fig_funnel.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=210)
             st.plotly_chart(fig_funnel, use_container_width=True)
 
         else:
-            # --- ZONA DE ANÁLISIS DE METRICAS REBUSCADAS (DEVOLUCIONES Y EFECTIVIDAD) ---
+            # --- ZONA DE ANÁLISIS DE METRICAS DE DEVOLUCIONES ---
             st.title(f"🔍 Análisis de Efectividad y Devoluciones — {mes_sel}")
             
-            # Cálculo de efectividad de entrega por parte de negocio
             f_c = df_facturas_validas[df_facturas_validas['Tipo_Pedido'] == 'GENERAL']['ID_Pedido_Ingresado'].nunique()
             e_c = df_entregados_mes[df_entregados_mes['Tipo_Pedido'] == 'GENERAL']['ID_Pedido_Ingresado'].nunique()
             
@@ -267,13 +274,10 @@ if not df_raw.empty:
             
             col_ef1, col_ef2 = st.columns(2)
             with col_ef1:
-                st.metric("📉 Efectividad Logística COSTEÑO", f"{ef_costeno:.2f} %", 
-                          delta="Mayor Volumen" if ef_costeno >= ef_bees else None)
+                st.metric("📉 Efectividad Logística COSTEÑO", f"{ef_costeno:.2f} %")
             with col_ef2:
-                st.metric("🐝 Efectividad Logística BEES", f"{ef_bees:.2f} %", 
-                          delta="Mayor Volumen" if ef_bees > ef_costeno else None)
+                st.metric("🐝 Efectividad Logística BEES", f"{ef_bees:.2f} %")
             
-            # Conclusión explícita de efectividad
             if ef_costeno != ef_bees:
                 ganador = "COSTEÑO (GENERAL)" if ef_costeno > ef_bees else "BEES"
                 st.success(f"🏆 El canal con **mayor efectividad de entrega** en {mes_sel} es **{ganador}**.")
@@ -281,7 +285,6 @@ if not df_raw.empty:
             st.markdown("---")
             st.markdown("#### 📋 Distribución y Participación de Motivos de Devolución")
             
-            # Extraer registros con devoluciones reales en el mes de facturación
             df_devs_reales = df_facturados_mes[
                 df_facturados_mes['Motivo_Devolucion'].notna() & 
                 (df_facturados_mes['Motivo_Devolucion'].astype(str).str.strip() != "") &
@@ -289,7 +292,6 @@ if not df_raw.empty:
             ]
             
             if not df_devs_reales.empty:
-                # Pivote dinámico de motivos calculando cantidades por canal comercial
                 pivot_dev = df_devs_reales.groupby('Motivo_Devolucion').agg(
                     Total_Pedidos=('ID_Pedido_Ingresado', 'nunique'),
                     Costeno_Pedidos=('ID_Pedido_Ingresado', lambda x: x[df_devs_reales['Tipo_Pedido'] == 'GENERAL'].nunique()),
@@ -304,10 +306,9 @@ if not df_raw.empty:
                 pivot_dev = pivot_dev.sort_values(by='Total_Pedidos', ascending=False)
                 
                 st.metric("📉 Capital Total Retenido por Devoluciones", f"S/. {gran_total_dinero_dev:,.2f}")
+                st.markdown("💡 *Haz clic en cualquier fila para desplegar el desglose de pedidos.*")
                 
-                # Tabla de control interactiva (Push-up con selección nativa)
-                st.markdown("💡 *Haz clic en cualquier fila para desplegar inmediatamente la pestaña flotante con el desglose de pedidos.*")
-                
+                # CORRECCIÓN DE SINTAXIS: Cambiado "single_row" por el estándar oficial "single-row"
                 seleccion = st.dataframe(
                     pivot_dev,
                     width='stretch',
@@ -320,10 +321,9 @@ if not df_raw.empty:
                         "Dinero_Impactado": st.column_config.NumberColumn("Dinero Retenido", format="S/. %,.2f")
                     },
                     on_select="rerun",
-                    selection_mode="single_row"
+                    selection_mode="single-row"
                 )
                 
-                # --- INTERACTIVIDAD CON SESSION STATE (DEEP-DIVE EN NUEVO CONTENEDOR) ---
                 if seleccion and seleccion['selection']['rows']:
                     idx_fila = seleccion['selection']['rows'][0]
                     motivo_click = pivot_dev.iloc[idx_fila]['Motivo_Devolucion']
