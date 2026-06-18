@@ -172,8 +172,8 @@ df_ingresados_mes = df_zona[df_zona['Mes_Ingreso'] == mes_seleccionado]
 df_facturados_mes = df_zona[df_zona['Mes_Facturacion'] == mes_seleccionado]
 df_facturados_validos = df_facturados_mes[(df_facturados_mes['ID_Factura_Final'].notna()) & (df_facturados_mes['ID_Factura_Final'].astype(str).str.strip() != "0") & (df_facturados_mes['ID_Factura_Final'].astype(str).str.strip() != "")]
 
-# Entregados: Facturados cuya columna Motivo_Devolucion esté limpia
-condicion_entregado = (df_facturados_validos['Motivo_Devolucion'].na_rep == "") | (df_facturados_validos['Motivo_Devolucion'].isna()) | (df_facturados_validos['Motivo_Devolucion'].astype(str).str.strip() == "")
+# CORRECCIÓN DE LÍNEA 176: Entregados son aquellos facturados cuya columna Motivo_Devolucion esté limpia/vacía
+condicion_entregado = (df_facturados_validos['Motivo_Devolucion'].isna()) | (df_facturados_validos['Motivo_Devolucion'].astype(str).str.strip() == "")
 df_entregados_mes = df_facturados_validos[condicion_entregado]
 
 with col_visual:
