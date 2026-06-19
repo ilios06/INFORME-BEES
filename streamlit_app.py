@@ -213,7 +213,7 @@ if not df_base_raw.empty:
                 st.plotly_chart(px.pie(summary_metrics, values='Dinero', names='Canal_UI', hole=0.4,
                                       title=f"% Capital Total", color_discrete_sequence=colores_corporativos).update_layout(showlegend=False, height=170, margin=dict(t=30, b=0, l=0, r=0)), use_container_width=True)
             
-            # --- 6.2 DESGLOSE NUMÉRICO COMPATIBLE CON CUALQUIER TEMA NATIVO ---
+            # --- 6.2 DESGLOSE NUMÉRICO COMPATIBLE CON LIGHT MODE ---
             st.markdown("#### 🔢 Desglose Estructural de Canales")
             
             total_pedidos_gen = summary_metrics['Pedidos'].sum()
@@ -234,14 +234,14 @@ if not df_base_raw.empty:
             with rm3:
                 for _, row in summary_metrics.iterrows():
                     lbl_color = "violet" if row['Canal_UI'] == "COSTEÑO" else "blue"
-                    soles_val = row['Dinero']
-                    usd_val = soles_val / TC_FIJO
-                    st.markdown(f"**:{lbl_color}[{row['Canal_UI']}]:** S/. {soles_val:,.2f} | \$ {usd_val:,.2f}")
+                    solles_val = row['Dinero']
+                    usd_val = solles_val / TC_FIJO
+                    st.markdown(f"**:{lbl_color}[{row['Canal_UI']}]:** S/. {solles_val:,.2f} | \$ {usd_val:,.2f}")
                 st.markdown(f"**TOTAL GENERAL:** S/. {total_dinero_gen:,.2f} | \$ {total_dinero_gen/TC_FIJO:,.2f}")
         
         st.markdown("---")
         
-        # --- 6.3 INDICADORES COMERCIALES ADAPTATIVOS (BORDES NATIVOS) ---
+        # --- 6.3 INDICADORES COMERCIALES ADAPTATIVOS ---
         st.markdown(f"### 🧮 Indicadores de Tracción Comercial — Estado Actual: `{estado_flujo_sel.upper()}`")
         
         def calcular_kpis_dinamicos(df_sub_canal):
@@ -448,7 +448,7 @@ if not df_base_raw.empty:
                 }
             )
             
-            # --- 7.3 ANÁLISIS DE DENSIDAD POR SKU AFECTADO (CONMUTABLE MARCA/CATEGORÍA) ---
+            # --- 7.3 ANÁLISIS DE DENSIDAD POR SKU AFECTADO (CORREGIDO DE VARIABLES) ---
             st.markdown("---")
             st.markdown("#### 📦 Análisis de Densidad por SKU Afectado (Fuga por Atributo)")
             st.caption("Filtra el impacto financiero de las devoluciones analizando la procedencia por Categoría Comercial o Marca del portafolio unificado.")
@@ -463,13 +463,14 @@ if not df_base_raw.empty:
             df_density_sku['Capital_Impactado_USD'] = df_density_sku['Capital_Impactado_Soles'] / TC_FIJO
             df_density_sku = df_density_sku.sort_values('Pedidos_Unicos', ascending=False)
             
+            # 🌟 SOLUCIÓN AL NAMEERROR: Cambiado de 'criterion_sku' a 'criterio_sku' para coincidir exactamente
             fig_sku_density = px.bar(
                 df_density_sku.head(10),
                 x='Pedidos_Unicos',
                 y=criterio_sku,
                 orientation='h',
                 title=f"Top Impacto por {criterio_sku}",
-                labels={'Pedidos_Unicos': 'Pedidos Afectados', criterion_sku: ''},
+                labels={'Pedidos_Unicos': 'Pedidos Afectados', criterio_sku: ''},
                 color_discrete_sequence=['#4A3B5C']
             )
             fig_sku_density.update_layout(height=170, margin=dict(t=30, b=10, l=10, r=10))
