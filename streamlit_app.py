@@ -18,7 +18,11 @@ st.set_page_config(
 # --- CONFIGURACIÓN DE CONSTANTES COMERCIALES ---
 TC_FIJO = 3.396  # Tipo de cambio fijo solicitado
 
-# --- 1. CONEXIÓN SEGURA CON GOOGLE DRIVE (USANDO SECRETS) ---
+# 🌟 ENLACES DE INGESTACIÓN LOGÍSTICA (OPCIÓN A CON ENLACE CONFIRMADO)
+FILE_ID_CONCILIACION = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"
+URL_MAESTRO_SKU = "https://docs.google.com/spreadsheets/d/1r1aJNiDvArFqEfAGJ6i8hq_zAo8G5lAc7uW6pXhylZo/export?format=xlsx&gid=1445055226"
+
+# --- 1. CONEXIÓN SEGURA CON GOOGLE DRIVE (PARA BASE PRINCIPAL) ---
 @st.cache_resource
 def obtener_servicio_drive():
     try:
@@ -26,10 +30,10 @@ def obtener_servicio_drive():
         creds = service_account.Credentials.from_service_account_info(info_claves)
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"❌ Error de autenticación: Verifica st.secrets. Detalles: {e}")
+        st.error(f"❌ Error de autenticación en Drive: Verifica st.secrets. Detalles: {e}")
         return None
 
-# --- 2. DESCARGA Y OPTIMIZACIÓN DE CACHÉ DE DATOS MAESTROS ---
+# --- 2. DESCARGA Y OPTIMIZACIÓN DE CACHÉ DE BASE CONCILIACIÓN ---
 @st.cache_data(ttl=3600)
 def descargar_datos_maestros(file_id):
     service = obtener_servicio_drive()
@@ -94,48 +98,30 @@ def descargar_datos_maestros(file_id):
         st.error(f"❌ Error al descargar el Excel Base de Conciliación: {e}")
         return pd.DataFrame()
 
-# --- 2.1 INGESTIÓN DEL MAESTRO DE SKU (CRUCE DINÁMICO) ---
+# --- 2.1 DESCARGA DE MAESTRO SKU (MÉTODO BYPASS DE ALTA VELOCIDAD) ---
 @st.cache_data(ttl=3600)
-def descargar_maestro_sku(file_id):
-    service = obtener_servicio_drive()
-    if not service:
-        return pd.DataFrame()
+def descargar_maestro_sku_directo(url_exportacion):
     try:
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while done is False:
-            status, done = downloader.next_chunk()
-        fh.seek(0)
-        
-        # Lectura dirigida de las columnas B (Material), O (Marca) e Y (Categoria Cuota)
-        df_sku = pd.read_excel(fh, dtype={
+        df_sku = pd.read_excel(url_exportacion, dtype={
             'Material': str,
             'Marca': str,
             'Categoria Cuota': str
         })
         
-        # Limpieza e indexación atómica para el cruce en memoria
         df_sku['Material'] = df_sku['Material'].astype(str).str.strip()
         df_sku['Marca'] = df_sku['Marca'].astype(str).str.strip().fillna("SIN MARCA")
         df_sku['Categoria Cuota'] = df_sku['Categoria Cuota'].astype(str).str.strip().fillna("SIN CATEGORIA")
         
-        # Retener únicamente las columnas necesarias para no saturar memoria
         df_sku = df_sku[['Material', 'Marca', 'Categoria Cuota']].drop_duplicates('Material')
         return df_sku
     except Exception as e:
-        st.error(f"⚠️ Alerta: No se pudo acoplar el Maestro de SKU desde Drive de forma directa. Detalles: {e}")
+        st.error(f"⚠️ Alerta Bypass SKU: No se pudo acoplar el maestro desde la URL. Detalles: {e}")
         return pd.DataFrame()
 
-# --- 3. INGESTACIÓN DE DATOS (MÓDULOS EN PARALELO) ---
-FILE_ID_CONCILIACION = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"
-FILE_ID_MAESTRO_SKU  = "1r1aJNiDvArFqEfAGJ6i8hq_zAo8G5lAc7uW6pXhylZo"
-
+# --- 3. INGESTACIÓN EN PARALELO Y CRUCE EXTENDED ETL ---
 df_base_raw = descargar_datos_maestros(FILE_ID_CONCILIACION)
-df_sku_raw  = descargar_maestro_sku(FILE_ID_MAESTRO_SKU)
+df_sku_raw  = descargar_maestro_sku_directo(URL_MAESTRO_SKU)
 
-# --- 3.1 PIPELINE DE CONSOLIDACIÓN (MERGE JOIN DE ALTA VELOCIDAD) ---
 if not df_base_raw.empty:
     if not df_sku_raw.empty:
         df_raw = pd.merge(
@@ -145,13 +131,12 @@ if not df_base_raw.empty:
             right_on='Material', 
             how='left'
         )
-        # Resguardo de valores nulos si entra un SKU nuevo no catalogado en el maestro
         df_raw['Categoria Cuota'] = df_raw['Categoria Cuota'].fillna("No Catalogado")
         df_raw['Marca'] = df_raw['Marca'].fillna("No Catalogado")
     else:
         df_raw = df_base_raw.copy()
-        df_raw['Categoria Cuota'] = "Sin Maestro SKU"
-        df_raw['Marca'] = "Sin Maestro SKU"
+        df_raw['Categoria Cuota'] = "Sin Conexión Maestro"
+        df_raw['Marca'] = "Sin Conexión Maestro"
 
     if 'Fecha_Ingreso_DT' in df_raw.columns:
         max_date_ingreso = df_raw['Fecha_Ingreso_DT'].max()
@@ -159,10 +144,10 @@ if not df_base_raw.empty:
     else:
         fecha_actualizacion_str = "No disponible"
 
-    # --- 4. PANEL DE CONTROL LATERAL NATIVO COLAZABLE ---
+    # --- 4. PANEL DE CONTROL LATERAL NATIVO (OCULTABLE) ---
     st.sidebar.header("🎛️ Panel de Control")
     meses_validos = sorted([m for m in df_raw['Mes_Ingreso'].unique() if m not in ["Sin Mes", "nan"]])
-    mes_sel = st.sidebar.selectbox("📅 Mes de Ingresos", options=meses_validos, index=0)
+    mes_sel = st.sidebar.selectbox("📅 Mes de Ingreso", options=meses_validos, index=0)
     opcion_region = st.sidebar.radio("📍 Región Geográfica", ["Lima", "Arequipa", "Ver Todo"], index=0)
     estado_flujo_sel = st.sidebar.selectbox("🔀 Estado del Flujo Visual", ["Entregados", "Facturados", "Ingresados"], index=0)
     zona_analisis = st.sidebar.toggle("🔍 Activar Zona de Análisis Profundo", value=False)
@@ -228,7 +213,7 @@ if not df_base_raw.empty:
                 st.plotly_chart(px.pie(summary_metrics, values='Dinero', names='Canal_UI', hole=0.4,
                                       title=f"% Capital Total", color_discrete_sequence=colores_corporativos).update_layout(showlegend=False, height=170, margin=dict(t=30, b=0, l=0, r=0)), use_container_width=True)
             
-            # --- 6.2 DESGLOSE NUMÉRICO COMPATIBLE CON LIGHT MODE ---
+            # --- 6.2 DESGLOSE NUMÉRICO COMPATIBLE CON CUALQUIER TEMA NATIVO ---
             st.markdown("#### 🔢 Desglose Estructural de Canales")
             
             total_pedidos_gen = summary_metrics['Pedidos'].sum()
@@ -256,7 +241,7 @@ if not df_base_raw.empty:
         
         st.markdown("---")
         
-        # --- 6.3 INDICADORES COMERCIALES ---
+        # --- 6.3 INDICADORES COMERCIALES ADAPTATIVOS (BORDES NATIVOS) ---
         st.markdown(f"### 🧮 Indicadores de Tracción Comercial — Estado Actual: `{estado_flujo_sel.upper()}`")
         
         def calcular_kpis_dinamicos(df_sub_canal):
@@ -276,21 +261,15 @@ if not df_base_raw.empty:
         
         card1, card2 = st.columns(2)
         with card1:
-            st.markdown(f"""
-            <div style='background-color: #F4F4F8; padding: 15px; border-radius: 10px; border-left: 5px solid #4A3B5C; color: #1E1E2E;'>
-                <h4 style='margin:0; color:#4A3B5C;'>⚙️ COSTEÑO</h4>
-                <p style='margin:5px 0;'><b>N° Pedidos por Cliente Promedio:</b> {kp_c_pc:,.2f}</p>
-                <p style='margin:5px 0; color:#17A2B8;'><b>Ticket Promedio:</b> S/. {kp_c_tk:,.2f} | $ {kp_c_tk/TC_FIJO:,.2f}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown("### ⚙️ COSTEÑO")
+                st.markdown(f"**N° Pedidos por Cliente Promedio:** {kp_c_pc:,.2f}")
+                st.markdown(f"**Ticket Promedio:** S/. {kp_c_tk:,.2f} | \$ {kp_c_tk/TC_FIJO:,.2f}")
         with card2:
-            st.markdown(f"""
-            <div style='background-color: #F4F4F8; padding: 15px; border-radius: 10px; border-left: 5px solid #17A2B8; color: #1E1E2E;'>
-                <h4 style='margin:0; color:#17A2B8;'>🐝 BEES</h4>
-                <p style='margin:5px 0;'><b>N° Pedidos por Cliente Promedio:</b> {kp_b_pc:,.2f}</p>
-                <p style='margin:5px 0; color:#17A2B8;'><b>Ticket Promedio:</b> S/. {kp_b_tk:,.2f} | $ {kp_b_tk/TC_FIJO:,.2f}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown("### 🐝 BEES")
+                st.markdown(f"**N° Pedidos por Cliente Promedio:** {kp_b_pc:,.2f}")
+                st.markdown(f"**Ticket Promedio:** S/. {kp_b_tk:,.2f} | \$ {kp_b_tk/TC_FIJO:,.2f}")
             
         st.markdown("---")
         
@@ -469,10 +448,10 @@ if not df_base_raw.empty:
                 }
             )
             
-            # --- 7.3 🌟 NUEVA EXIGENCIA: ANÁLISIS DE DENSIDAD POR SKU AFECTADO (CONMUTABLE) ---
+            # --- 7.3 ANÁLISIS DE DENSIDAD POR SKU AFECTADO (CONMUTABLE MARCA/CATEGORÍA) ---
             st.markdown("---")
             st.markdown("#### 📦 Análisis de Densidad por SKU Afectado (Fuga por Atributo)")
-            st.caption("Filtra el impacto financiero de las devoluciones analizando la procedencia por Categoría Comercial o Marca del portafolio.")
+            st.caption("Filtra el impacto financiero de las devoluciones analizando la procedencia por Categoría Comercial o Marca del portafolio unificado.")
             
             criterio_sku = st.radio("🏷️ Segmentar Agrupación por:", ["Categoria Cuota", "Marca"], index=0, horizontal=True)
             
@@ -484,14 +463,13 @@ if not df_base_raw.empty:
             df_density_sku['Capital_Impactado_USD'] = df_density_sku['Capital_Impactado_Soles'] / TC_FIJO
             df_density_sku = df_density_sku.sort_values('Pedidos_Unicos', ascending=False)
             
-            # Gráfico de barras ejecutivas para SKU
             fig_sku_density = px.bar(
                 df_density_sku.head(10),
                 x='Pedidos_Unicos',
                 y=criterio_sku,
                 orientation='h',
                 title=f"Top Impacto por {criterio_sku}",
-                labels={'Pedidos_Unicos': 'Pedidos Afectados', criterio_sku: ''},
+                labels={'Pedidos_Unicos': 'Pedidos Afectados', criterion_sku: ''},
                 color_discrete_sequence=['#4A3B5C']
             )
             fig_sku_density.update_layout(height=170, margin=dict(t=30, b=10, l=10, r=10))
@@ -509,32 +487,55 @@ if not df_base_raw.empty:
                 }
             )
 
-            # --- 7.4 🌟 NUEVA MEJORA: SCORE DE CONCENTRACIÓN DE CLIENTES CRÍTICOS (PARETO 80/20) ---
+            # --- 7.4 CLIENTES RECURRENTES ---
+            st.markdown("---")
+            st.markdown("#### 👥 Mapeo de Clientes Recurrentes con Múltiples Devoluciones")
+            
+            df_cli_rec = df_devs_reales.groupby(['Codigo_Cliente', 'Canal_UI']).agg(
+                Pedidos_Rechazados=('ID_Pedido_Ingresado', 'nunique'),
+                Monto_Fuga_Soles=('TOTAL', 'sum')
+            ).reset_index()
+            
+            df_cli_rec = df_cli_rec[df_cli_rec['Pedidos_Rechazados'] > 1].sort_values('Pedidos_Rechazados', ascending=False)
+            
+            if not df_cli_rec.empty:
+                df_cli_rec['Monto_Fuga_USD'] = df_cli_rec['Monto_Fuga_Soles'] / TC_FIJO
+                st.dataframe(
+                    df_cli_rec,
+                    width='stretch',
+                    hide_index=True,
+                    column_config={
+                        "Codigo_Cliente": "Código del Cliente",
+                        "Canal_UI": "Canal Comprador",
+                        "Pedidos_Rechazados": st.column_config.NumberColumn("Cantidad Pedidos Devueltos", format="%d 📦"),
+                        "Monto_Fuga_Soles": st.column_config.NumberColumn("Impacto Bruto (S/.)", format="S/. %,.2f"),
+                        "Monto_Fuga_USD": st.column_config.NumberColumn("Impacto Bruto ($)", format="$ %,.2f")
+                    }
+                )
+            else:
+                st.info("✨ Operación Óptima: No se registran clientes recurrentes con más de una devolución en este período.")
+
+            # --- 7.5 SCORE DE CONCENTRACIÓN DE CLIENTES CRÍTICOS (PARETO 80/20) ---
             st.markdown("---")
             st.markdown("#### 🎯 Score de Concentración de Clientes Críticos (Análisis de Pareto)")
-            st.caption("Aplicación de la regla de Pareto: Identifica al grupo de clientes que concentra el mayor volumen de dinero rebotado de la compañía.")
+            st.caption("Aplicación de la regla de Pareto: Identifica de forma matemática al grupo de clientes que concentra el mayor volumen de dinero rebotado de la compañía.")
             
-            # Agrupación base por cliente sobre devoluciones
             df_pareto = df_devs_reales.groupby(['Codigo_Cliente', 'Canal_UI']).agg(
                 Pedidos_Devueltos=('ID_Pedido_Ingresado', 'nunique'),
                 Monto_Fuga_Soles=('TOTAL', 'sum')
             ).reset_index()
             
             if not df_pareto.empty:
-                # Ordenar descendente por el monto total de la pérdida financiera
                 df_pareto = df_pareto.sort_values(by='Monto_Fuga_Soles', ascending=False)
                 
-                # Cálculos de acumulación estadística
                 monto_global_dev = df_pareto['Monto_Fuga_Soles'].sum()
                 df_pareto['Monto_Acumulado_Soles'] = df_pareto['Monto_Fuga_Soles'].cumsum()
                 df_pareto['% Acumulado Capital'] = (df_pareto['Monto_Acumulado_Soles'] / monto_global_dev * 100)
                 
-                # Clasificación inteligente basada en la regla 80/20
                 df_pareto['Clasificación Operativa'] = df_pareto['% Acumulado Capital'].apply(
                     lambda x: "🔴 Crítico (Zona Pareto 80%)" if x <= 80.0 else "🟢 Estable (Zona 20%)"
                 )
                 
-                # Conversión monetaria paralela
                 df_pareto['Monto_Fuga_USD'] = df_pareto['Monto_Fuga_Soles'] / TC_FIJO
                 df_pareto['% Acumulado Capital_TXT'] = df_pareto['% Acumulado Capital'].map("{:.2f}%".format)
                 
