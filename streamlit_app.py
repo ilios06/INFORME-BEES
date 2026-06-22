@@ -17,8 +17,9 @@ st.set_page_config(
 
 # --- CONFIGURACIÓN DE CONSTANTES COMERCIALES ---
 TC_FIJO = 3.396  # Tipo de cambio fijo solicitado
+LISTA_MESES_ORDENADOS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-# 🌟 ENLACES DE INGESTACIÓN LOGÍSTICA (OPCIÓN A CON ENLACE CONFIRMADO)
+# 🌟 ENLACES DE INGESTACIÓN LOGÍSTICA (BYPASS DIRECTO POR URL)
 FILE_ID_CONCILIACION = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"
 URL_MAESTRO_SKU = "https://docs.google.com/spreadsheets/d/1r1aJNiDvArFqEfAGJ6i8hq_zAo8G5lAc7uW6pXhylZo/export?format=xlsx&gid=1445055226"
 
@@ -146,7 +147,13 @@ if not df_base_raw.empty:
 
     # --- 4. PANEL DE CONTROL LATERAL NATIVO (OCULTABLE) ---
     st.sidebar.header("🎛️ Panel de Control")
-    meses_validos = sorted([m for m in df_raw['Mes_Ingreso'].unique() if m not in ["Sin Mes", "nan"]])
+    
+    # 📆 ORDENAMIENTO CRÓNOLÓGICO SEGURO DE MESES (Evita orden alfabético de la UI)
+    meses_existentes = df_raw['Mes_Ingreso'].unique()
+    meses_validos = [m for m in LISTA_MESES_ORDENADOS if m in meses_existentes]
+    if not meses_validos:
+        meses_validos = sorted([m for m in meses_existentes if m not in ["Sin Mes", "nan"]])
+        
     mes_sel = st.sidebar.selectbox("📅 Mes de Ingreso", options=meses_validos, index=0)
     opcion_region = st.sidebar.radio("📍 Región Geográfica", ["Lima", "Arequipa", "Ver Todo"], index=0)
     estado_flujo_sel = st.sidebar.selectbox("🔀 Estado del Flujo Visual", ["Entregados", "Facturados", "Ingresados"], index=0)
@@ -246,28 +253,31 @@ if not df_base_raw.empty:
         
         def calcular_kpis_dinamicos(df_sub_canal):
             p_unicos = df_sub_canal['ID_Pedido_Ingresado'].nunique()
+            # 🌟 MEJORA: Conteo de clientes únicos por código unificado garantizado
             c_unicos = df_sub_canal['Codigo_Cliente'].nunique()
             monto_total = df_sub_canal['TOTAL'].sum()
             
             pedidos_por_cliente = p_unicos / c_unicos if c_unicos > 0 else 0
             ticket_promedio = monto_total / p_unicos if p_unicos > 0 else 0
-            return pedidos_por_cliente, ticket_promedio
+            return pedidos_por_cliente, ticket_promedio, c_unicos
 
         df_costeno_kpi = df_activo_visual[df_activo_visual['Canal_UI'] == 'COSTEÑO']
         df_bees_kpi = df_activo_visual[df_activo_visual['Canal_UI'] == 'BEES']
         
-        kp_c_pc, kp_c_tk = calcular_kpis_dinamicos(df_costeno_kpi)
-        kp_b_pc, kp_b_tk = calcular_kpis_dinamicos(df_bees_kpi)
+        kp_c_pc, kp_c_tk, kp_c_cli = calcular_kpis_dinamicos(df_costeno_kpi)
+        kp_b_pc, kp_b_tk, kp_b_cli = calcular_kpis_dinamicos(df_bees_kpi)
         
         card1, card2 = st.columns(2)
         with card1:
             with st.container(border=True):
                 st.markdown("### ⚙️ COSTEÑO")
+                st.markdown(f"**Clientes Únicos Activos:** {kp_c_cli:,} Compradores")
                 st.markdown(f"**N° Pedidos por Cliente Promedio:** {kp_c_pc:,.2f}")
                 st.markdown(f"**Ticket Promedio:** S/. {kp_c_tk:,.2f} | \$ {kp_c_tk/TC_FIJO:,.2f}")
         with card2:
             with st.container(border=True):
                 st.markdown("### 🐝 BEES")
+                st.markdown(f"**Clientes Únicos Activos:** {kp_b_cli:,} Compradores")
                 st.markdown(f"**N° Pedidos por Cliente Promedio:** {kp_b_pc:,.2f}")
                 st.markdown(f"**Ticket Promedio:** S/. {kp_b_tk:,.2f} | \$ {kp_b_tk/TC_FIJO:,.2f}")
             
@@ -316,6 +326,66 @@ if not df_base_raw.empty:
             'Pedidos Perdidos en Fase': ["-", f"{perdidos_en_facturacion:,} Pedidos (No Facturados)", f"{perdidos_en_entrega:,} Pedidos (Devoluciones)"]
         })
         st.dataframe(df_perdidos, width='stretch', hide_index=True)
+
+        # --- 6.5 🌟 NUEVA MEJORA: GRÁFICO DE LÍNEAS CON MARCADORES (EVOLUCIÓN INTERACTIVA) ---
+        st.markdown("---")
+        st.markdown("### 📈 Evolución y Tendencia Mensual Operativa")
+        st.caption("Filtra y analiza el comportamiento histórico de la operación. Este gráfico se recalcula según la región y canal logístico seleccionado arriba.")
+        
+        # Selector dinámico de indicadores clave
+        metrica_tendencia = st.selectbox(
+            "📊 Seleccione la métrica para graficar la tendencia histórica:",
+            ["Capital Total (Ganancia Bruta - GMV)", "Pedidos Únicos", "Peso Total Ingresado (Kg)", "Clientes Únicos (Códigos)"]
+        )
+        
+        # Agrupación por Mes_Ingreso sobre la base regional
+        df_tendencia_base = df_region.copy()
+        if canal_funnel != "Ambos":
+            df_tendencia_base = df_tendencia_base[df_tendencia_base['Canal_UI'] == canal_funnel]
+            
+        df_trend_grouped = df_tendencia_base.groupby('Mes_Ingreso').agg(
+            TOTAL=('TOTAL', 'sum'),
+            Pedidos_Unicos=('ID_Pedido_Ingresado', 'nunique'),
+            Peso_Total=('Peso_Ingresado', 'sum'),
+            Clientes_Unicos=('Codigo_Cliente', 'nunique')
+        ).reset_index()
+        
+        # Alineación cronológica para evitar desorden alfabético de Plotly
+        df_trend_grouped['Mes_Index'] = df_trend_grouped['Mes_Ingreso'].map(lambda x: LISTA_MESES_ORDENADOS.index(x) if x in LISTA_MESES_ORDENADOS else 99)
+        df_trend_grouped = df_trend_grouped.sort_values('Mes_Index')
+        
+        if metrica_tendencia == "Capital Total (Ganancia Bruta - GMV)":
+            y_col = 'TOTAL'
+            title_trend = "Evolución Mensual del Capital Total (S/.)"
+            ytick_format = "S/. %{y:,.2f}"
+        elif metrica_tendencia == "Pedidos Únicos":
+            y_col = 'Pedidos_Unicos'
+            title_trend = "Evolución Mensual de Pedidos Únicos Procesados"
+            ytick_format = "%{y:,} Pedidos"
+        elif metrica_tendencia == "Peso Total Ingresado (Kg)":
+            y_col = 'Peso_Total'
+            title_trend = "Evolución Mensual del Peso Total Comercializado (Kg)"
+            ytick_format = "%{y:,.1f} Kg"
+        else:
+            y_col = 'Clientes_Unicos'
+            title_trend = "Evolución Mensual de Clientes Únicos Atendidos"
+            ytick_format = "%{y:,} Clientes"
+            
+        fig_trend = px.line(
+            df_trend_grouped, 
+            x='Mes_Ingreso', 
+            y=y_col, 
+            markers=True, 
+            title=title_trend,
+            color_discrete_sequence=['#17A2B8']
+        )
+        fig_trend.update_traces(
+            hovertemplate="<b>Mes:</b> %{x}<br><b>Valor:</b> " + ytick_format + "<extra></extra>",
+            line=dict(width=3),
+            marker=dict(size=9, symbol="circle")
+        )
+        fig_trend.update_layout(height=280, margin=dict(t=40, b=20, l=40, r=20), xaxis_title="", yaxis_title="")
+        st.plotly_chart(fig_trend, use_container_width=True)
 
     else:
         # --- 7. ZONA DE ANÁLISIS PROFUNDO ---
@@ -434,8 +504,26 @@ if not df_base_raw.empty:
             usd_impacto_total = total_row['Dinero_Impactado'] / TC_FIJO
             st.metric(f"📉 Capital Retenido Afectado ({canal_dev.upper()})", f"S/. {total_row['Dinero_Impactado']:,.2f} | $ {usd_impacto_total:,.2f}")
             
+            # 🌟 NUEVA MEJORA: SOMBREADO TENUE ADAPTATIVO POR FILA CON PALETA EJECUTIVA (LIGHT MODE BLINDADO)
+            def aplicar_estilos_filas_devolucion(row):
+                motivo = row['Motivo_Devolucion']
+                if motivo == 'TOTAL GENERAL':
+                    return ['background-color: rgba(128, 128, 128, 0.18); font-weight: bold;'] * len(row)
+                
+                cat = mapear_a_macrocategoria(motivo)
+                if "Restricción del Cliente" in cat:
+                    return ['background-color: rgba(156, 39, 176, 0.07);'] * len(row)      # Morado Tenue
+                elif "Otras Causas Logísticas" in cat:
+                    return ['background-color: rgba(255, 152, 0, 0.07);'] * len(row)      # Anaranjado Tenue
+                elif "Discrepancia Comercial/Precio" in cat:
+                    return ['background-color: rgba(76, 175, 80, 0.07);'] * len(row)      # Verde Tenue
+                elif "Problemas de Calidad/Producto" in cat:
+                    return ['background-color: rgba(139, 69, 19, 0.07);'] * len(row)      # Marrón Madera Tenue
+                return [''] * len(row)
+
+            # Inyección del Styler con compatibilidad total en column_config
             st.dataframe(
-                pivot_dev,
+                pivot_dev.style.apply(aplicar_estilos_filas_devolucion, axis=1),
                 width='stretch',
                 hide_index=True,
                 column_config={
@@ -448,7 +536,7 @@ if not df_base_raw.empty:
                 }
             )
             
-            # --- 7.3 ANÁLISIS DE DENSIDAD POR SKU AFECTADO (CORREGIDO DE VARIABLES) ---
+            # --- 7.3 ANÁLISIS DE DENSIDAD POR SKU AFECTADO ---
             st.markdown("---")
             st.markdown("#### 📦 Análisis de Densidad por SKU Afectado (Fuga por Atributo)")
             st.caption("Filtra el impacto financiero de las devoluciones analizando la procedencia por Categoría Comercial o Marca del portafolio unificado.")
@@ -463,7 +551,6 @@ if not df_base_raw.empty:
             df_density_sku['Capital_Impactado_USD'] = df_density_sku['Capital_Impactado_Soles'] / TC_FIJO
             df_density_sku = df_density_sku.sort_values('Pedidos_Unicos', ascending=False)
             
-            # 🌟 SOLUCIÓN AL NAMEERROR: Cambiado de 'criterion_sku' a 'criterio_sku' para coincidir exactamente
             fig_sku_density = px.bar(
                 df_density_sku.head(10),
                 x='Pedidos_Unicos',
@@ -492,8 +579,10 @@ if not df_base_raw.empty:
             st.markdown("---")
             st.markdown("#### 👥 Mapeo de Clientes Recurrentes con Múltiples Devoluciones")
             
+            # 🌟 NUEVA MEJORA: Incorporación de la columna de Cantidad Total de SKUs devueltos únicos por comprador
             df_cli_rec = df_devs_reales.groupby(['Codigo_Cliente', 'Canal_UI']).agg(
                 Pedidos_Rechazados=('ID_Pedido_Ingresado', 'nunique'),
+                Skus_Devueltos_Unicos=('SKU_Material_Ingresado', 'nunique'),
                 Monto_Fuga_Soles=('TOTAL', 'sum')
             ).reset_index()
             
@@ -509,6 +598,7 @@ if not df_base_raw.empty:
                         "Codigo_Cliente": "Código del Cliente",
                         "Canal_UI": "Canal Comprador",
                         "Pedidos_Rechazados": st.column_config.NumberColumn("Cantidad Pedidos Devueltos", format="%d 📦"),
+                        "Skus_Devueltos_Unicos": st.column_config.NumberColumn("Cantidad SKUs Devueltos", format="%d 🏷️"),
                         "Monto_Fuga_Soles": st.column_config.NumberColumn("Impacto Bruto (S/.)", format="S/. %,.2f"),
                         "Monto_Fuga_USD": st.column_config.NumberColumn("Impacto Bruto ($)", format="$ %,.2f")
                     }
