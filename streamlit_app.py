@@ -62,7 +62,6 @@ def descargar_datos_maestros(file_id):
         df['Zona_OfVta_Clean'] = df.get('Zona_OfVta', pd.Series(["SIN ZONA"]*len(df))).astype(str).str.strip().str.upper()
         df['Canal_UI'] = df['Tipo_Pedido'].map({'GENERAL': 'COSTEÑO', 'PEDIDO BEES': 'BEES'}).fillna(df['Tipo_Pedido'])
         
-        # Extracción y Auditoría de la Columna de RUTAS (Columna C / Columna_AE_Zpedidos)
         if 'Columna_AE_Zpedidos' in df.columns:
             df['Ruta_Final'] = df['Columna_AE_Zpedidos'].astype(str).str.strip()
         elif len(df.columns) > 2:
@@ -92,7 +91,7 @@ def descargar_maestro_sku_directo(url_exportacion):
         st.error(f"⚠️ Alerta Bypass SKU: {e}")
         return pd.DataFrame()
 
-# --- SPINNER DE INGESTIÓN ST.SPINNER V2 ---
+# --- SPINNER DE INGESTIÓN ---
 with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
     df_base_raw = descargar_datos_maestros(FILE_ID_CONCILIACION)
     df_sku_raw  = descargar_maestro_sku_directo(URL_MAESTRO_SKU)
@@ -107,7 +106,6 @@ with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
 # --- CONTROL LATERAL: FILTROS DE BÚSQUEDA Y SEGMENTOS ---
 st.sidebar.title("🗂️ Filtros de busqueda")
 
-# Segmentos de navegación reincorporados a la barra lateral con formato solicitado
 segmento_actual = st.sidebar.radio(
     "Módulos de Sistema",
     ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 Análisis", "🔮 Proyección", "🚧 En proceso"],
@@ -123,14 +121,13 @@ if st.sidebar.button("🔄 Forzar Sincronización"):
     st.cache_data.clear()
     st.rerun()
 
-# --- LÓGICA DE FILTRADO CORE (CONEXIÓN TOTAL A ESTADOS DE PEDIDO) ---
+# --- LÓGICA DE FILTRADO CORE ---
 df_region = df_raw.copy()
 if opcion_region == "Lima":
     df_region = df_raw[df_raw['Zona_OfVta_Clean'] == "LIMA"]
 elif opcion_region == "Arequipa":
     df_region = df_raw[df_raw['Zona_OfVta_Clean'] == "AREQUIPA"]
 
-# df_activo gobierna de forma reactiva la pantalla de acuerdo al filtro de Estado seleccionado
 df_activo = df_region.copy()
 if estado_flujo_sel == "Facturados":
     df_activo = df_activo[df_activo['ID_Factura_Final'].notna() & (df_activo['ID_Factura_Final'].astype(str) != "0") & (df_activo['ID_Factura_Final'].astype(str) != "")]
@@ -163,7 +160,8 @@ if segmento_actual == "🏠 Principal":
             }
             sel_metrics = st.multiselect("📊 Selección de Métricas simultáneas:", list(metricas_disp.keys()), default=["GMV", "Pedidos"])
         with fil3:
-            tipo_grafico = st.radio("📐 Estructura visual:", ["Unitario (Separados)", "Comparativo (Línea sobre línea)"], horizontal=True)
+            # Opción de Estructura Visual ordenada verticalmente en columna
+            tipo_grafico = st.radio("📐 Estructura visual:", ["Unitario (Separados)", "Comparativo (Línea sobre línea)"], horizontal=False)
 
         if sel_metrics and meses_sel:
             df_trend_base = df_activo[df_activo['Mes_Ingreso'].isin(meses_sel)]
@@ -209,13 +207,23 @@ if segmento_actual == "🏠 Principal":
                     st.plotly_chart(fig_trend, use_container_width=True)
                     
                 else:
-                    # Gráfico Comparativo: Línea sobre línea en un solo Canvas
+                    # Gráfico Comparativo: Con etiquetas de datos MoM mantenidas de igual manera
                     fig_trend = go.Figure()
                     colores_palette = ['#17A2B8', '#4A3B5C', '#FFC107', '#28A745', '#DC3545']
                     for idx, met in enumerate(sel_metrics):
                         y_vals = df_trend[met].values
+                        
+                        pct_changes = [0.0] * len(y_vals)
+                        for j in range(1, len(y_vals)):
+                            if y_vals[j-1] != 0:
+                                pct_changes[j] = ((y_vals[j] - y_vals[j-1]) / y_vals[j-1]) * 100
+                        
+                        text_labels = [""] + [f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%" for pct in pct_changes[1:]]
+                        
                         fig_trend.add_trace(go.Scatter(
-                            x=df_trend['Mes_Ingreso'], y=y_vals, mode='lines+markers',
+                            x=df_trend['Mes_Ingreso'], y=y_vals, mode='lines+markers+text',
+                            text=text_labels, textposition="top center",
+                            textfont=dict(size=11, weight="bold"),
                             line=dict(width=3, color=colores_palette[idx % len(colores_palette)]),
                             name=met
                         ))
@@ -245,13 +253,19 @@ if segmento_actual == "🏠 Principal":
     # --- PARTE 2: DESGLOSE DE PARTICIPACIÓN Y EFECTIVIDAD ---
     st.subheader("📋 Desglose de Participación y Efectividad")
     
+    # Filtro unificado de mes para que afecte tanto a las Rutas como al Gráfico Circular
+    m_col1, _ = st.columns([1.5, 3.5])
+    with m_col1:
+        mes_pie_sel = st.selectbox("📅 Seleccionar Mes de Análisis:", options=meses_existentes, key="pie_compact_filter")
+        
+    df_pie_data = df_activo[df_activo['Mes_Ingreso'] == mes_pie_sel]
+    
     c1, c2 = st.columns([1.8, 1.2])
 
     with c1:
-        # Auditoría Exacta de Rutas basada en Columna_AE_Zpedidos (Columna C)
         st.markdown("**📍 Ranking de Pedidos Únicos por Ruta**")
         
-        df_rutas_perf = df_activo.groupby(['Ruta_Final', 'Canal_UI'])['ID_Pedido_Ingresado'].nunique().unstack(fill_value=0)
+        df_rutas_perf = df_pie_data.groupby(['Ruta_Final', 'Canal_UI'])['ID_Pedido_Ingresado'].nunique().unstack(fill_value=0)
         if 'COSTEÑO' not in df_rutas_perf.columns: df_rutas_perf['COSTEÑO'] = 0
         if 'BEES' not in df_rutas_perf.columns: df_rutas_perf['BEES'] = 0
         
@@ -264,23 +278,20 @@ if segmento_actual == "🏠 Principal":
             'COSTEÑO': 'Pedidos COSTEÑO',
             'BEES': 'Pedidos BEES'
         })
-        df_rutas_perf = df_rutas_perf.sort_values(by='% BEES', ascending=False)
+        # Ordenado de menor a mayor por penetración de BEES tal como se solicitó
+        df_rutas_perf = df_rutas_perf.sort_values(by='% BEES', ascending=True)
         st.dataframe(df_rutas_perf[['Ruta', 'Pedidos COSTEÑO', 'Pedidos BEES', '% BEES']], use_container_width=True, hide_index=True)
 
     with c2:
         st.markdown("**🥧 Participación de Negocio**")
-        # Filtro de mes compacto exclusivo para la sección circular
-        mes_pie_sel = st.selectbox("📅 Seleccionar Mes:", options=meses_existentes, key="pie_compact_filter", label_visibility="collapsed")
-        
-        df_pie_data = df_activo[df_activo['Mes_Ingreso'] == mes_pie_sel]
         df_pie_grp = df_pie_data.groupby('Canal_UI')['ID_Pedido_Ingresado'].nunique().reset_index()
         
         if not df_pie_grp.empty:
+            # Gráfico agrandado un 5% (de 180 a 195 de altura)
             fig_pie = px.pie(df_pie_grp, values='ID_Pedido_Ingresado', names='Canal_UI', hole=0.4, color_discrete_sequence=['#4A3B5C', '#17A2B8'])
-            fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=180, showlegend=False)
+            fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=195, showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # Cuadro Informativo solicitado: ( BEES / COSTEÑO - CANTIDAD DE PEDIDOS / PORCENTAJE )
             total_pedidos_pie = df_pie_grp['ID_Pedido_Ingresado'].sum()
             c_peds = df_pie_grp[df_pie_grp['Canal_UI']=='COSTEÑO']['ID_Pedido_Ingresado'].sum()
             b_peds = df_pie_grp[df_pie_grp['Canal_UI']=='BEES']['ID_Pedido_Ingresado'].sum()
@@ -288,8 +299,9 @@ if segmento_actual == "🏠 Principal":
             pct_c = (c_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
             pct_b = (b_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
             
+            # Tarjeta adaptativa (utiliza variables del tema nativo de Streamlit para lucir perfecta en Modo Claro y Oscuro)
             st.markdown(f"""
-            <div style="background-color: #f1f3f5; padding: 10px; border-radius: 6px; font-size: 12px; border-left: 4px solid #4A3B5C; color: #333;">
+            <div style="background-color: var(--secondary-background-color); color: var(--text-color); padding: 10px; border-radius: 6px; font-size: 13px; border-left: 4px solid #4A3B5C; text-align: center;">
                 <b>📌 Resumen de Cuotas ({mes_pie_sel}):</b><br>
                 • <b>COSTEÑO:</b> {c_peds:,} und ({pct_c:.2f}%)<br>
                 • <b>BEES:</b> {b_peds:,} und ({pct_b:.2f}%)
@@ -300,17 +312,24 @@ if segmento_actual == "🏠 Principal":
 
     st.markdown("---")
 
-    # --- APARTADO: ANÁLISIS DE EFECTIVIDAD LOGÍSTICA (LADO A LADO) ---
+    # --- APARTADO: ANÁLISIS DE EFECTIVIDAD LOGÍSTICA ---
     st.markdown("#### ⚙️ Análisis de Efectividad Logística")
-    f_c1, f_c2 = st.columns(2)
-    with f_c1:
-        mes_funnel = st.selectbox("📅 Analizar Mes Flujo:", options=meses_existentes, key="funnel_mes_key")
-    with f_c2:
+    
+    # Grid estructurado: Filtros posicionados estratégicamente sobre sus respectivos elementos visuales
+    col_g, col_t = st.columns([2.5, 1.5])
+    
+    with col_t:
+        # Filtro de Mes Flujo centrado sobre el desglose de fases
+        sub_c1, sub_c2, sub_c3 = st.columns([1, 4, 1])
+        with sub_c2:
+            mes_funnel = st.selectbox("📅 Mes Flujo:", options=meses_existentes, key="funnel_mes_key")
+            
+    with col_g:
+        # Filtro de segmento posicionado sobre el gráfico de barras
         canal_funnel = st.radio("🏢 Segmento:", ["UNIVERSO", "BEES", "COSTEÑO"], horizontal=True, key="funnel_canal_key")
 
     df_f_base = df_region[df_region['Mes_Ingreso'] == mes_funnel]
     
-    # Cálculo puro de fases matemáticas
     def extraer_metricas_embudo(df_fase):
         ing = df_fase['ID_Pedido_Ingresado'].nunique()
         fac = df_fase[df_fase['ID_Factura_Final'].notna() & (df_fase['ID_Factura_Final'].astype(str) != "0")]['ID_Pedido_Ingresado'].nunique()
@@ -322,9 +341,6 @@ if segmento_actual == "🏠 Principal":
         ing_f, fac_f, ent_f = extraer_metricas_embudo(df_f_filt)
     else:
         ing_f, fac_f, ent_f = extraer_metricas_embudo(df_f_base)
-
-    # Renderizado Lado a Lado: Gráfico (Izquierda) vs Tabla Monospace (Derecha)
-    col_g, col_t = st.columns([2.5, 1.5])
 
     with col_g:
         fases_labels = ["1. Ingreso", "2. Facturación", "3. Entrega"]
@@ -349,7 +365,6 @@ if segmento_actual == "🏠 Principal":
             st.info("No hay transacciones para construir el embudo logístico.")
 
     with col_t:
-        # Extracción e inyección de porcentajes exactos para Costeño y Bees de forma simultánea
         ing_c, fac_c, ent_c = extraer_metricas_embudo(df_f_base[df_f_base['Canal_UI']=='COSTEÑO'])
         ing_b, fac_b, ent_b = extraer_metricas_embudo(df_f_base[df_f_base['Canal_UI']=='BEES'])
 
@@ -362,8 +377,8 @@ if segmento_actual == "🏠 Principal":
         p_tot_b = (ent_b / ing_b * 100) if ing_b > 0 else 0
 
         html_efectividad = f"""
-        <div style="font-family: monospace; font-size: 13px; background-color: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; color: #333; margin-top: 15px;">
-            <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; color:#4A3B5C; border-bottom: 2px solid #ddd; padding-bottom: 4px;">
+        <div style="font-family: monospace; font-size: 13px; background-color: var(--secondary-background-color); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); color: var(--text-color); margin-top: 15px;">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; color:#4A3B5C; border-bottom: 2px solid var(--border-color); padding-bottom: 4px;">
                 <span style="width: 50%;">COSTEÑO</span>
                 <span style="width: 50%;">BEES</span>
             </div>
@@ -379,14 +394,14 @@ if segmento_actual == "🏠 Principal":
                 <span style="width: 50%;">Entregados: {p_ent_c:.2f}%</span>
                 <span style="width: 50%;">Entregados: {p_ent_b:.2f}%</span>
             </div>
-            <hr style="margin: 8px 0; border-top: 1px dashed #ccc;">
+            <hr style="margin: 8px 0; border-top: 1px dashed var(--border-color);">
             <div style="display: flex; justify-content: space-between; font-weight: bold; color: #17A2B8;">
                 <span style="width: 50%;">Total: {p_tot_c:.2f}%</span>
                 <span style="width: 50%;">Total: {p_tot_b:.2f}%</span>
             </div>
         </div>
         """
-        st.markdown("**📊 Desglose de Fases por Canal Comercial**")
+        st.markdown("<h5 style='text-align: center; margin-top: 10px;'>📊 Desglose de Fases por Canal Comercial</h5>", unsafe_allow_html=True)
         st.markdown(html_efectividad, unsafe_allow_html=True)
 
 
