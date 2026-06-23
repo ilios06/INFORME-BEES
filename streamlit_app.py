@@ -50,7 +50,7 @@ def descargar_datos_maestros(file_id):
             status, done = downloader.next_chunk()
         fh.seek(0)
         
-        df = pd.read_excel(fh, dtype={'ID_Pedido_Ingresado': str, 'ID_Factura_Final': str, 'SKU_Material_Ingresado': str, 'Codigo_Cliente': str, 'Motivo_Devolucion': str, 'Zona_OfVta': str, 'Tipo_Pedido': str})
+        df = pd.read_excel(fh, dtype={'ID_Pedido_Ingresado': str, 'ID_Factura_Final': str, 'SKU_Material_Ingresado': str, 'Codigo_Cliente': str, 'Motivo_Devolucion': str, 'Zona_OfVta': str, 'Tipo_Pedido': str, 'Columna_AE_Zpedidos': str})
         
         for c in df.columns:
             if df[c].dtype == object: df[c] = df[c].astype(str).str.strip()
@@ -61,6 +61,16 @@ def descargar_datos_maestros(file_id):
         
         df['Zona_OfVta_Clean'] = df.get('Zona_OfVta', pd.Series(["SIN ZONA"]*len(df))).astype(str).str.strip().str.upper()
         df['Canal_UI'] = df['Tipo_Pedido'].map({'GENERAL': 'COSTEÑO', 'PEDIDO BEES': 'BEES'}).fillna(df['Tipo_Pedido'])
+        
+        # Extracción y Auditoría de la Columna de RUTAS (Columna C / Columna_AE_Zpedidos)
+        if 'Columna_AE_Zpedidos' in df.columns:
+            df['Ruta_Final'] = df['Columna_AE_Zpedidos'].astype(str).str.strip()
+        elif len(df.columns) > 2:
+            df['Ruta_Final'] = df.iloc[:, 2].astype(str).str.strip()
+        else:
+            df['Ruta_Final'] = df['Zona_OfVta_Clean'].copy()
+            
+        df['Ruta_Final'] = df['Ruta_Final'].replace(['nan', 'None', ''], 'SIN RUTA')
         
         for col in ['Valor_Neto_Ingresado', 'TOTAL', 'Cantidad_Ingresada', 'Peso_Ingresado', 'Valor_Neto_Facturado', 'Cantidad_Facturada', 'Peso_Facturado']:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -82,7 +92,7 @@ def descargar_maestro_sku_directo(url_exportacion):
         st.error(f"⚠️ Alerta Bypass SKU: {e}")
         return pd.DataFrame()
 
-# --- SPINNER DE INGESTIÓN ---
+# --- SPINNER DE INGESTIÓN ST.SPINNER V2 ---
 with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
     df_base_raw = descargar_datos_maestros(FILE_ID_CONCILIACION)
     df_sku_raw  = descargar_maestro_sku_directo(URL_MAESTRO_SKU)
@@ -94,14 +104,18 @@ with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
     else:
         df_raw = df_base_raw.copy()
 
-# --- NAVEGACIÓN SUPERIOR ESTILO "PILLS/BOTONES" ---
-st.markdown("<br>", unsafe_allow_html=True)
-opciones_segmento = ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 Análisis", "🔮 Proyección", "🚧 En proceso"]
-segmento_actual = st.radio("Módulos", opciones_segmento, horizontal=True, label_visibility="collapsed")
-st.divider()
+# --- CONTROL LATERAL: FILTROS DE BÚSQUEDA Y SEGMENTOS ---
+st.sidebar.title("🗂️ Filtros de busqueda")
 
-# --- BARRA LATERAL: FILTROS DE BÚSQUEDA ---
-st.sidebar.title("🎛️ Filtros de busqueda")
+# Segmentos de navegación reincorporados a la barra lateral con formato solicitado
+segmento_actual = st.sidebar.radio(
+    "Módulos de Sistema",
+    ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 Análisis", "🔮 Proyección", "🚧 En proceso"],
+    index=0
+)
+
+st.sidebar.divider()
+st.sidebar.subheader("🎛️ Parámetros Globales")
 opcion_region = st.sidebar.selectbox("📍 Región Geográfica", ["Lima", "Arequipa", "Ver Todo"], index=2)
 estado_flujo_sel = st.sidebar.selectbox("🔀 Estado de Pedido", ["Ingresados", "Facturados", "Entregados"], index=0)
 
@@ -109,52 +123,49 @@ if st.sidebar.button("🔄 Forzar Sincronización"):
     st.cache_data.clear()
     st.rerun()
 
-# --- LÓGICA DE FILTRADO CORE ---
-# 1. Filtro de Región (Afecta a todo)
+# --- LÓGICA DE FILTRADO CORE (CONEXIÓN TOTAL A ESTADOS DE PEDIDO) ---
 df_region = df_raw.copy()
 if opcion_region == "Lima":
     df_region = df_raw[df_raw['Zona_OfVta_Clean'] == "LIMA"]
 elif opcion_region == "Arequipa":
     df_region = df_raw[df_raw['Zona_OfVta_Clean'] == "AREQUIPA"]
 
-# 2. Filtro de Estado de Pedido (Crea df_activo para la vista interactiva)
+# df_activo gobierna de forma reactiva la pantalla de acuerdo al filtro de Estado seleccionado
 df_activo = df_region.copy()
 if estado_flujo_sel == "Facturados":
     df_activo = df_activo[df_activo['ID_Factura_Final'].notna() & (df_activo['ID_Factura_Final'].astype(str) != "0") & (df_activo['ID_Factura_Final'].astype(str) != "")]
 elif estado_flujo_sel == "Entregados":
-    df_activo = df_activo[df_activo['ID_Factura_Final'].notna() & (df_activo['ID_Factura_Final'].astype(str) != "0")]
+    df_activo = df_activo[df_activo['ID_Factura_Final'].notna() & (df_activo['ID_Factura_Final'].astype(str) != "0") & (df_activo['ID_Factura_Final'].astype(str) != "")]
     df_activo = df_activo[(df_activo['Motivo_Devolucion'].isna()) | (df_activo['Motivo_Devolucion'] == "") | (df_activo['Motivo_Devolucion'].astype(str).str.upper() == "NAN")]
 
-
-# --- LÓGICA DE SEGMENTOS ---
+# --- RENDERING DE SEGMENTOS ---
 if segmento_actual == "🏠 Principal":
     st.title("🏠 Dashboard Principal Operativo")
-    st.markdown(f"Visualizando datos bajo el estado: **{estado_flujo_sel}**")
+    st.markdown(f"Status actual del panel: Flujo de Pedidos **{estado_flujo_sel}**")
     
-    # --- PARTE 1: EVOLUCIÓN Y TENDENCIA MENSUAL ---
+    # --- PARTE 1: EVOLUCIÓN Y TENDENCIA MENSUAL OPERATIVA ---
     with st.container(border=True):
         st.subheader("📈 Evolución y Tendencia Mensual Operativa")
         
-        # Filtro de selección de meses
         meses_existentes = sorted([m for m in df_activo['Mes_Ingreso'].unique() if m != "Sin Mes"], key=lambda x: LISTA_MESES_ORDENADOS.index(x) if x in LISTA_MESES_ORDENADOS else 99)
-        meses_sel = st.multiselect("📅 Seleccione los meses a comparar:", options=meses_existentes, default=meses_existentes)
         
-        metricas_disp = {
-            "GMV": ("TOTAL", "S/. {:,.2f}"),
-            "Pedidos": ("ID_Pedido_Ingresado", "{:,.0f} und"),
-            "Peso": ("Peso_Ingresado", "{:,.1f} Kg"),
-            "Clientes": ("Codigo_Cliente", "{:,.0f} cli"),
-            "Pedidos Devueltos": ("Devoluciones", "{:,.0f} und")
-        }
-        
-        sel_metrics = st.multiselect(
-            "📊 Seleccione las métricas a visualizar simultáneamente:",
-            list(metricas_disp.keys()),
-            default=["GMV", "Pedidos"]
-        )
-        
+        # Filtros organizados en línea (uno al lado del otro)
+        fil1, fil2, fil3 = st.columns([1.5, 1.5, 1.2])
+        with fil1:
+            meses_sel = st.multiselect("📅 Filtro de Meses a comparar:", options=meses_existentes, default=meses_existentes)
+        with fil2:
+            metricas_disp = {
+                "GMV": ("TOTAL", "S/. {:,.2f}"),
+                "Pedidos": ("ID_Pedido_Ingresado", "{:,.0f} und"),
+                "Peso": ("Peso_Ingresado", "{:,.1f} Kg"),
+                "Clientes": ("Codigo_Cliente", "{:,.0f} cli"),
+                "Pedidos Devueltos": ("Devoluciones", "{:,.0f} und")
+            }
+            sel_metrics = st.multiselect("📊 Selección de Métricas simultáneas:", list(metricas_disp.keys()), default=["GMV", "Pedidos"])
+        with fil3:
+            tipo_grafico = st.radio("📐 Estructura visual:", ["Unitario (Separados)", "Comparativo (Línea sobre línea)"], horizontal=True)
+
         if sel_metrics and meses_sel:
-            # Filtrar por meses seleccionados
             df_trend_base = df_activo[df_activo['Mes_Ingreso'].isin(meses_sel)]
             
             df_trend = df_trend_base.groupby('Mes_Ingreso').agg(
@@ -164,7 +175,6 @@ if segmento_actual == "🏠 Principal":
                 Clientes=('Codigo_Cliente', 'nunique')
             ).reset_index()
             
-            # Cálculo de devoluciones
             df_devs = df_region[df_region['Motivo_Devolucion'].notna() & (df_region['Motivo_Devolucion'] != "") & (df_region['Motivo_Devolucion'].str.upper() != "NAN")]
             df_devs_group = df_devs[df_devs['Mes_Ingreso'].isin(meses_sel)].groupby('Mes_Ingreso').agg(**{'Pedidos Devueltos': ('ID_Pedido_Ingresado', 'nunique')}).reset_index()
             df_trend = pd.merge(df_trend, df_devs_group, on='Mes_Ingreso', how='left').fillna(0)
@@ -172,158 +182,230 @@ if segmento_actual == "🏠 Principal":
             df_trend['Mes_Idx'] = df_trend['Mes_Ingreso'].map(lambda x: LISTA_MESES_ORDENADOS.index(x) if x in LISTA_MESES_ORDENADOS else 99)
             df_trend = df_trend.sort_values('Mes_Idx')
             
-            # Layout de Gráfico (80%) vs Caja de Info (20%)
-            col_chart, col_info = st.columns([4, 1.2])
+            col_chart, col_info = st.columns([4, 1])
             
             with col_chart:
-                fig_trend = make_subplots(rows=len(sel_metrics), cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=sel_metrics)
-                for i, met in enumerate(sel_metrics, 1):
-                    formato = metricas_disp[met][1]
-                    y_vals = df_trend[met].values 
+                if tipo_grafico == "Unitario (Separados)":
+                    fig_trend = make_subplots(rows=len(sel_metrics), cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=sel_metrics)
+                    for i, met in enumerate(sel_metrics, 1):
+                        formato = metricas_disp[met][1]
+                        y_vals = df_trend[met].values 
+                        
+                        pct_changes = [0.0] * len(y_vals)
+                        for j in range(1, len(y_vals)):
+                            if y_vals[j-1] != 0:
+                                pct_changes[j] = ((y_vals[j] - y_vals[j-1]) / y_vals[j-1]) * 100
+                        
+                        text_labels = [""] + [f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%" for pct in pct_changes[1:]]
+                        text_colors = ["gray"] + ["green" if pct >= 0 else "red" for pct in pct_changes[1:]]
+                        
+                        fig_trend.add_trace(go.Scatter(
+                            x=df_trend['Mes_Ingreso'], y=y_vals, mode='lines+markers+text',
+                            text=text_labels, textposition="top center",
+                            textfont=dict(color=text_colors, size=11, weight="bold"),
+                            marker=dict(size=8), line=dict(width=3), name=met
+                        ), row=i, col=1)
+                    fig_trend.update_layout(height=220 * len(sel_metrics), showlegend=False, margin=dict(t=40, b=20, l=20, r=20))
+                    st.plotly_chart(fig_trend, use_container_width=True)
                     
-                    pct_changes = [0.0] * len(y_vals)
-                    for j in range(1, len(y_vals)):
-                        if y_vals[j-1] != 0:
-                            pct_changes[j] = ((y_vals[j] - y_vals[j-1]) / y_vals[j-1]) * 100
-                    
-                    text_labels = [""] + [f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%" for pct in pct_changes[1:]]
-                    text_colors = ["gray"] + ["green" if pct >= 0 else "red" for pct in pct_changes[1:]]
-                    
-                    fig_trend.add_trace(go.Scatter(
-                        x=df_trend['Mes_Ingreso'], y=y_vals, mode='lines+markers+text',
-                        text=text_labels, textposition="top center",
-                        textfont=dict(color=text_colors, size=12, weight="bold"),
-                        marker=dict(size=8, color="#4A3B5C"), line=dict(width=3, color="#17A2B8"),
-                        hovertemplate=f"<b>%{{x}}</b><br>{met}: {formato.replace('{:', '%{y:').replace('}', '}')}<extra></extra>"
-                    ), row=i, col=1)
-                    
-                    fig_trend.update_yaxes(title_text="", row=i, col=1)
-
-                fig_trend.update_layout(height=max(250, 200 * len(sel_metrics)), showlegend=False, margin=dict(t=40, b=20, l=20, r=20))
-                st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    # Gráfico Comparativo: Línea sobre línea en un solo Canvas
+                    fig_trend = go.Figure()
+                    colores_palette = ['#17A2B8', '#4A3B5C', '#FFC107', '#28A745', '#DC3545']
+                    for idx, met in enumerate(sel_metrics):
+                        y_vals = df_trend[met].values
+                        fig_trend.add_trace(go.Scatter(
+                            x=df_trend['Mes_Ingreso'], y=y_vals, mode='lines+markers',
+                            line=dict(width=3, color=colores_palette[idx % len(colores_palette)]),
+                            name=met
+                        ))
+                    fig_trend.update_layout(height=380, showlegend=True, margin=dict(t=30, b=20, l=20, r=20))
+                    st.plotly_chart(fig_trend, use_container_width=True)
 
             with col_info:
-                st.markdown("#### 📋 Resumen del Periodo")
-                st.caption("Valores acumulados para los meses seleccionados en el gráfico.")
-                
+                st.markdown("##### 📋 Resumen Período")
                 for met in sel_metrics:
                     with st.container(border=True):
                         if met == "GMV":
-                            val = df_trend_base['TOTAL'].sum()
-                            st.metric("Total GMV", f"S/. {val:,.2f}")
+                            st.metric("Total GMV", f"S/. {df_trend_base['TOTAL'].sum():,.2f}")
                         elif met == "Pedidos":
-                            val = df_trend_base['ID_Pedido_Ingresado'].nunique()
-                            st.metric("Total Pedidos Únicos", f"{val:,} und")
+                            st.metric("Pedidos Únicos", f"{df_trend_base['ID_Pedido_Ingresado'].nunique():,}")
                         elif met == "Peso":
-                            val = df_trend_base['Peso_Ingresado'].sum()
-                            st.metric("Total Peso Ingresado", f"{val:,.1f} Kg")
+                            st.metric("Peso Total", f"{df_trend_base['Peso_Ingresado'].sum():,.1f} Kg")
                         elif met == "Clientes":
-                            val = df_trend_base['Codigo_Cliente'].nunique()
-                            st.metric("Total Clientes Únicos", f"{val:,} cli")
+                            st.metric("Clientes Activos", f"{df_trend_base['Codigo_Cliente'].nunique():,}")
                         elif met == "Pedidos Devueltos":
-                            val = df_devs[df_devs['Mes_Ingreso'].isin(meses_sel)]['ID_Pedido_Ingresado'].nunique()
-                            st.metric("Total Pedidos Devueltos", f"{val:,} und")
-
+                            val_dev = df_devs[df_devs['Mes_Ingreso'].isin(meses_sel)]['ID_Pedido_Ingresado'].nunique()
+                            st.metric("Devoluciones", f"{val_dev:,}")
         else:
-            st.info("👆 Selecciona al menos un mes y una métrica para visualizar la tendencia.")
+            st.info("Seleccione al menos un mes y una métrica para renderizar tendencias.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- PARTE 2: AUDITORÍA DETALLADA (INFERIOR) ---
+    # --- PARTE 2: DESGLOSE DE PARTICIPACIÓN Y EFECTIVIDAD ---
     st.subheader("📋 Desglose de Participación y Efectividad")
     
-    # 2.1 Gráficos Superiores (Ranking y Participación usando df_activo filtrado)
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns([1.8, 1.2])
 
     with c1:
+        # Auditoría Exacta de Rutas basada en Columna_AE_Zpedidos (Columna C)
         st.markdown("**📍 Ranking de Pedidos Únicos por Ruta**")
-        df_rutas = df_activo.groupby('Zona_OfVta_Clean')['ID_Pedido_Ingresado'].nunique().reset_index()
-        df_rutas.columns = ['Ruta (Zona)', 'Total Pedidos']
-        df_rutas = df_rutas.sort_values('Total Pedidos', ascending=False)
-        st.dataframe(df_rutas, use_container_width=True, hide_index=True)
+        
+        df_rutas_perf = df_activo.groupby(['Ruta_Final', 'Canal_UI'])['ID_Pedido_Ingresado'].nunique().unstack(fill_value=0)
+        if 'COSTEÑO' not in df_rutas_perf.columns: df_rutas_perf['COSTEÑO'] = 0
+        if 'BEES' not in df_rutas_perf.columns: df_rutas_perf['BEES'] = 0
+        
+        df_rutas_perf = df_rutas_perf.reset_index()
+        df_rutas_perf['Total_Ruta'] = df_rutas_perf['COSTEÑO'] + df_rutas_perf['BEES']
+        df_rutas_perf['% BEES'] = (df_rutas_perf['BEES'] / df_rutas_perf['Total_Ruta'].replace(0, 1)) * 100
+        
+        df_rutas_perf = df_rutas_perf.rename(columns={
+            'Ruta_Final': 'Ruta',
+            'COSTEÑO': 'Pedidos COSTEÑO',
+            'BEES': 'Pedidos BEES'
+        })
+        df_rutas_perf = df_rutas_perf.sort_values(by='% BEES', ascending=False)
+        st.dataframe(df_rutas_perf[['Ruta', 'Pedidos COSTEÑO', 'Pedidos BEES', '% BEES']], use_container_width=True, hide_index=True)
 
     with c2:
         st.markdown("**🥧 Participación de Negocio**")
-        df_pie = df_activo.groupby('Canal_UI')['ID_Pedido_Ingresado'].nunique().reset_index()
-        if not df_pie.empty:
-            fig_pie = px.pie(df_pie, values='ID_Pedido_Ingresado', names='Canal_UI', hole=0.5, color_discrete_sequence=['#4A3B5C', '#17A2B8'])
-            fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250)
+        # Filtro de mes compacto exclusivo para la sección circular
+        mes_pie_sel = st.selectbox("📅 Seleccionar Mes:", options=meses_existentes, key="pie_compact_filter", label_visibility="collapsed")
+        
+        df_pie_data = df_activo[df_activo['Mes_Ingreso'] == mes_pie_sel]
+        df_pie_grp = df_pie_data.groupby('Canal_UI')['ID_Pedido_Ingresado'].nunique().reset_index()
+        
+        if not df_pie_grp.empty:
+            fig_pie = px.pie(df_pie_grp, values='ID_Pedido_Ingresado', names='Canal_UI', hole=0.4, color_discrete_sequence=['#4A3B5C', '#17A2B8'])
+            fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=180, showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
+            
+            # Cuadro Informativo solicitado: ( BEES / COSTEÑO - CANTIDAD DE PEDIDOS / PORCENTAJE )
+            total_pedidos_pie = df_pie_grp['ID_Pedido_Ingresado'].sum()
+            c_peds = df_pie_grp[df_pie_grp['Canal_UI']=='COSTEÑO']['ID_Pedido_Ingresado'].sum()
+            b_peds = df_pie_grp[df_pie_grp['Canal_UI']=='BEES']['ID_Pedido_Ingresado'].sum()
+            
+            pct_c = (c_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
+            pct_b = (b_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
+            
+            st.markdown(f"""
+            <div style="background-color: #f1f3f5; padding: 10px; border-radius: 6px; font-size: 12px; border-left: 4px solid #4A3B5C; color: #333;">
+                <b>📌 Resumen de Cuotas ({mes_pie_sel}):</b><br>
+                • <b>COSTEÑO:</b> {c_peds:,} und ({pct_c:.2f}%)<br>
+                • <b>BEES:</b> {b_peds:,} und ({pct_b:.2f}%)
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.info("Sin datos para este estado de pedido.")
+            st.info("Sin registros.")
 
     st.markdown("---")
 
-    # 2.2 Filtros Exclusivos para la base inferior
+    # --- APARTADO: ANÁLISIS DE EFECTIVIDAD LOGÍSTICA (LADO A LADO) ---
     st.markdown("#### ⚙️ Análisis de Efectividad Logística")
-    f_col1, f_col2 = st.columns(2)
-    with f_col1:
-        mes_detalle = st.selectbox("📅 Analizar Mes:", options=meses_existentes)
-    with f_col2:
-        canal_detalle = st.radio("🏢 Segmento Logístico:", ["UNIVERSO", "BEES", "COSTEÑO"], horizontal=True)
+    f_c1, f_c2 = st.columns(2)
+    with f_c1:
+        mes_funnel = st.selectbox("📅 Analizar Mes Flujo:", options=meses_existentes, key="funnel_mes_key")
+    with f_c2:
+        canal_funnel = st.radio("🏢 Segmento:", ["UNIVERSO", "BEES", "COSTEÑO"], horizontal=True, key="funnel_canal_key")
 
-    # 2.3 Embudo de Barras Apiladas (Usa df_region base para que el cálculo del embudo sea matemático y real)
-    df_funnel_base = df_region[df_region['Mes_Ingreso'] == mes_detalle]
-    if canal_detalle != "UNIVERSO":
-        df_funnel_base = df_funnel_base[df_funnel_base['Canal_UI'] == canal_detalle]
+    df_f_base = df_region[df_region['Mes_Ingreso'] == mes_funnel]
+    
+    # Cálculo puro de fases matemáticas
+    def extraer_metricas_embudo(df_fase):
+        ing = df_fase['ID_Pedido_Ingresado'].nunique()
+        fac = df_fase[df_fase['ID_Factura_Final'].notna() & (df_fase['ID_Factura_Final'].astype(str) != "0")]['ID_Pedido_Ingresado'].nunique()
+        ent = df_fase[df_fase['ID_Factura_Final'].notna() & (df_fase['ID_Factura_Final'].astype(str) != "0") & ((df_fase['Motivo_Devolucion'].isna()) | (df_fase['Motivo_Devolucion'] == "") | (df_fase['Motivo_Devolucion'].astype(str).str.upper() == "NAN"))]['ID_Pedido_Ingresado'].nunique()
+        return ing, fac, ent
 
-    # Cálculos puros de fases
-    ing = df_funnel_base['ID_Pedido_Ingresado'].nunique()
-    fac = df_funnel_base[df_funnel_base['ID_Factura_Final'].notna() & (df_funnel_base['ID_Factura_Final'].astype(str) != "0")]['ID_Pedido_Ingresado'].nunique()
-    ent = df_funnel_base[df_funnel_base['ID_Factura_Final'].notna() & (df_funnel_base['ID_Factura_Final'].astype(str) != "0") & ((df_funnel_base['Motivo_Devolucion'].isna()) | (df_funnel_base['Motivo_Devolucion'] == "") | (df_funnel_base['Motivo_Devolucion'].astype(str).str.upper() == "NAN"))]['ID_Pedido_Ingresado'].nunique()
-
-    # Preparar DataFrame para Gráfico de Barras Apiladas
-    fases_nombres = ["1. Ingreso", "2. Facturación", "3. Entrega"]
-    pedidos_pasados = [ing, fac, ent]
-    pedidos_perdidos = [0, ing - fac, ing - ent]
-
-    df_stack = pd.DataFrame({
-        "Fase": fases_nombres * 2,
-        "Cantidad": pedidos_pasados + pedidos_perdidos,
-        "Tipo": ["✔️ Pasados"]*3 + ["❌ Perdidos"]*3
-    })
-
-    if ing > 0:
-        fig_stack = px.bar(
-            df_stack, 
-            x="Fase", 
-            y="Cantidad", 
-            color="Tipo", 
-            barmode="stack",
-            text="Cantidad",
-            title=f"Efectividad por Fases — {canal_detalle} ({mes_detalle})",
-            color_discrete_map={"✔️ Pasados": "#17A2B8", "❌ Perdidos": "#E74C3C"}
-        )
-        
-        # Formato limpio para la gráfica
-        fig_stack.update_traces(textposition='inside', textfont=dict(color='white', size=14, weight='bold'))
-        fig_stack.update_layout(
-            height=350, 
-            margin=dict(t=40, b=20, l=20, r=20),
-            xaxis_title="", 
-            yaxis_title="Cantidad de Pedidos",
-            legend_title="Estado de Flujo"
-        )
-        st.plotly_chart(fig_stack, use_container_width=True)
+    if canal_funnel != "UNIVERSO":
+        df_f_filt = df_f_base[df_f_base['Canal_UI'] == canal_funnel]
+        ing_f, fac_f, ent_f = extraer_metricas_embudo(df_f_filt)
     else:
-        st.info("No hay pedidos registrados para graficar la efectividad en este mes/canal.")
+        ing_f, fac_f, ent_f = extraer_metricas_embudo(df_f_base)
 
-elif segmento_actual == "🔮 Proyección":
-    st.title("🔮 Proyección y Forecasting")
-    st.info("Módulo reservado para la implementación de predicción de demanda logística. Se activará en el próximo Sprint de Desarrollo.")
+    # Renderizado Lado a Lado: Gráfico (Izquierda) vs Tabla Monospace (Derecha)
+    col_g, col_t = st.columns([2.5, 1.5])
+
+    with col_g:
+        fases_labels = ["1. Ingreso", "2. Facturación", "3. Entrega"]
+        lista_pasados = [ing_f, fac_f, ent_f]
+        lista_perdidos = [0, ing_f - fac_f, ing_f - ent_f]
+
+        df_stack = pd.DataFrame({
+            "Fase": fases_labels * 2,
+            "Cantidad": lista_pasados + lista_perdidos,
+            "Tipo": ["✔️ Pasados"]*3 + ["❌ Perdidos"]*3
+        })
+
+        if ing_f > 0:
+            fig_stack = px.bar(
+                df_stack, x="Fase", y="Cantidad", color="Tipo", barmode="stack", text="Cantidad",
+                color_discrete_map={"✔️ Pasados": "#17A2B8", "❌ Perdidos": "#E74C3C"}
+            )
+            fig_stack.update_traces(textposition='inside', textfont=dict(color='white', size=13, weight='bold'))
+            fig_stack.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10), xaxis_title="", yaxis_title="Pedidos", legend_title="")
+            st.plotly_chart(fig_stack, use_container_width=True)
+        else:
+            st.info("No hay transacciones para construir el embudo logístico.")
+
+    with col_t:
+        # Extracción e inyección de porcentajes exactos para Costeño y Bees de forma simultánea
+        ing_c, fac_c, ent_c = extraer_metricas_embudo(df_f_base[df_f_base['Canal_UI']=='COSTEÑO'])
+        ing_b, fac_b, ent_b = extraer_metricas_embudo(df_f_base[df_f_base['Canal_UI']=='BEES'])
+
+        p_fac_c = (fac_c / ing_c * 100) if ing_c > 0 else 0
+        p_ent_c = (ent_c / fac_c * 100) if fac_c > 0 else 0
+        p_tot_c = (ent_c / ing_c * 100) if ing_c > 0 else 0
+
+        p_fac_b = (fac_b / ing_b * 100) if ing_b > 0 else 0
+        p_ent_b = (ent_b / fac_b * 100) if fac_b > 0 else 0
+        p_tot_b = (ent_b / ing_b * 100) if ing_b > 0 else 0
+
+        html_efectividad = f"""
+        <div style="font-family: monospace; font-size: 13px; background-color: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; color: #333; margin-top: 15px;">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 10px; color:#4A3B5C; border-bottom: 2px solid #ddd; padding-bottom: 4px;">
+                <span style="width: 50%;">COSTEÑO</span>
+                <span style="width: 50%;">BEES</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="width: 50%;">Ingreso: 100%</span>
+                <span style="width: 50%;">Ingreso: 100%</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="width: 50%;">Facturados: {p_fac_c:.2f}%</span>
+                <span style="width: 50%;">Facturados: {p_fac_b:.2f}%</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="width: 50%;">Entregados: {p_ent_c:.2f}%</span>
+                <span style="width: 50%;">Entregados: {p_ent_b:.2f}%</span>
+            </div>
+            <hr style="margin: 8px 0; border-top: 1px dashed #ccc;">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; color: #17A2B8;">
+                <span style="width: 50%;">Total: {p_tot_c:.2f}%</span>
+                <span style="width: 50%;">Total: {p_tot_b:.2f}%</span>
+            </div>
+        </div>
+        """
+        st.markdown("**📊 Desglose de Fases por Canal Comercial**")
+        st.markdown(html_efectividad, unsafe_allow_html=True)
+
 
 elif segmento_actual == "📊 Resumen":
     st.title("📊 Resumen Ejecutivo")
-    st.info("🚧 Módulo en construcción.")
+    st.info("Módulo en construcción.")
 
 elif segmento_actual == "📈 Métricas":
-    st.title("📈 Métricas Comerciales y Logísticas")
-    st.info("🚧 Módulo en construcción.")
+    st.title("📈 Métricas Comerciales")
+    st.info("Módulo en construcción.")
 
 elif segmento_actual == "🔍 Análisis":
     st.title("🔍 Análisis Profundo (Deep Dive)")
-    st.info("🚧 Módulo en construcción.")
+    st.info("Módulo en construcción.")
+
+elif segmento_actual == "🔮 Proyección":
+    st.title("🔮 Proyección")
+    st.info("Módulo en construcción.")
 
 else:
     st.title("🚧 En proceso")
-    st.info("Espacio reservado.")
+    st.info("Módulo en construcción.")
