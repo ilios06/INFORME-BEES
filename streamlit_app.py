@@ -82,7 +82,7 @@ def descargar_maestro_sku_directo(url_exportacion):
         st.error(f"⚠️ Alerta Bypass SKU: {e}")
         return pd.DataFrame()
 
-# --- SPINNER DE INGESTIÓN (EJECUCIÓN VISUAL ATRACTIVA) ---
+# --- SPINNER DE INGESTIÓN ---
 with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
     df_base_raw = descargar_datos_maestros(FILE_ID_CONCILIACION)
     df_sku_raw  = descargar_maestro_sku_directo(URL_MAESTRO_SKU)
@@ -94,7 +94,7 @@ with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
     else:
         df_raw = df_base_raw.copy()
 
-# --- SEGMENTACIÓN DE LA APLICACIÓN (NAVEGACIÓN) ---
+# --- SEGMENTACIÓN DE LA APLICACIÓN ---
 st.sidebar.title("Navegación del Sistema")
 segmento_actual = st.sidebar.radio(
     "Seleccione un módulo:",
@@ -164,11 +164,11 @@ if segmento_actual == "🏠 Principal":
             fig_trend = make_subplots(rows=len(sel_metrics), cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=sel_metrics)
             
             for i, met in enumerate(sel_metrics, 1):
-                col_name = metricas_disp[met][0] if met != "Pedidos Devueltos" else met
+                # 🛠️ CORRECCIÓN: Se llama directamente a 'met' porque df_trend ya posee las columnas renombradas.
                 formato = metricas_disp[met][1]
+                y_vals = df_trend[met].values 
                 
-                # Cálculo de porcentaje MoM
-                y_vals = df_trend[col_name].values
+                # Cálculo de porcentaje MoM (Month-over-Month)
                 pct_changes = [0.0] * len(y_vals)
                 for j in range(1, len(y_vals)):
                     if y_vals[j-1] != 0:
@@ -219,7 +219,7 @@ if segmento_actual == "🏠 Principal":
 
     # Filtrar datos de la sección inferior
     df_mes = df_region[df_region['Mes_Ingreso'] == mes_detalle]
-    df_estado = df_mes.copy() # Base sobre la cual aplicar estados si es necesario
+    df_estado = df_mes.copy()
     
     if canal_detalle != "UNIVERSO":
         df_estado = df_estado[df_estado['Canal_UI'] == canal_detalle]
@@ -227,7 +227,7 @@ if segmento_actual == "🏠 Principal":
     c1, c2, c3 = st.columns([1.2, 1, 1.3])
 
     with c1:
-        # Ranking de Rutas (Tomando Zona_OfVta como Ruta conceptual)
+        # Ranking de Rutas
         st.markdown("**📍 Ranking de Pedidos Únicos por Ruta**")
         df_rutas = df_estado.groupby('Zona_OfVta_Clean')['ID_Pedido_Ingresado'].nunique().reset_index()
         df_rutas.columns = ['Ruta (Zona)', 'Total Pedidos']
@@ -254,7 +254,7 @@ if segmento_actual == "🏠 Principal":
         def calc_efectividad(df_fase):
             ing = df_fase['ID_Pedido_Ingresado'].nunique()
             fac = df_fase[df_fase['ID_Factura_Final'].notna() & (df_fase['ID_Factura_Final'].astype(str) != "0") & (df_fase['ID_Factura_Final'].astype(str) != "")]['ID_Pedido_Ingresado'].nunique()
-            # Entregados: Tienen factura Y NO tienen motivo de devolución
+            
             df_facs = df_fase[df_fase['ID_Factura_Final'].notna() & (df_fase['ID_Factura_Final'].astype(str) != "0")]
             ent = df_facs[(df_facs['Motivo_Devolucion'].isna()) | (df_facs['Motivo_Devolucion'] == "") | (df_facs['Motivo_Devolucion'].astype(str).str.upper() == "NAN")]['ID_Pedido_Ingresado'].nunique()
             
@@ -292,7 +292,6 @@ if segmento_actual == "🏠 Principal":
         </div>
         """
         st.markdown(html_efectividad, unsafe_allow_html=True)
-
 
 elif segmento_actual == "📊 Resumen":
     st.title("📊 Resumen Ejecutivo")
