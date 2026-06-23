@@ -106,11 +106,16 @@ with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
 # --- CONTROL LATERAL: FILTROS DE BÚSQUEDA Y SEGMENTOS ---
 st.sidebar.title("🗂️ Filtros de busqueda")
 
-segmento_actual = st.sidebar.radio(
+# MODIFICACIÓN SOLICITADA: Estilo moderno e integrado mediante segmented_control (Estilo Pestañas de Plantilla)
+opciones_modulos = ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 Análisis", "🔮 Proyección", "🚧 En proceso"]
+segmento_actual = st.sidebar.segmented_control(
     "Módulos de Sistema",
-    ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 Análisis", "🔮 Proyección", "🚧 En proceso"],
-    index=0
+    options=opciones_modulos,
+    default="🏠 Principal"
 )
+# Protección preventiva en caso de deselección accidental
+if not segmento_actual:
+    segmento_actual = "🏠 Principal"
 
 st.sidebar.divider()
 st.sidebar.subheader("🎛️ Parámetros Globales")
@@ -160,7 +165,6 @@ if segmento_actual == "🏠 Principal":
             }
             sel_metrics = st.multiselect("📊 Selección de Métricas simultáneas:", list(metricas_disp.keys()), default=["GMV", "Pedidos"])
         with fil3:
-            # Opción de Estructura Visual ordenada verticalmente en columna
             tipo_grafico = st.radio("📐 Estructura visual:", ["Unitario (Separados)", "Comparativo (Línea sobre línea)"], horizontal=False)
 
         if sel_metrics and meses_sel:
@@ -207,7 +211,6 @@ if segmento_actual == "🏠 Principal":
                     st.plotly_chart(fig_trend, use_container_width=True)
                     
                 else:
-                    # Gráfico Comparativo: Con etiquetas de datos MoM mantenidas de igual manera
                     fig_trend = go.Figure()
                     colores_palette = ['#17A2B8', '#4A3B5C', '#FFC107', '#28A745', '#DC3545']
                     for idx, met in enumerate(sel_metrics):
@@ -253,7 +256,6 @@ if segmento_actual == "🏠 Principal":
     # --- PARTE 2: DESGLOSE DE PARTICIPACIÓN Y EFECTIVIDAD ---
     st.subheader("📋 Desglose de Participación y Efectividad")
     
-    # Filtro unificado de mes para que afecte tanto a las Rutas como al Gráfico Circular
     m_col1, _ = st.columns([1.5, 3.5])
     with m_col1:
         mes_pie_sel = st.selectbox("📅 Seleccionar Mes de Análisis:", options=meses_existentes, key="pie_compact_filter")
@@ -278,7 +280,6 @@ if segmento_actual == "🏠 Principal":
             'COSTEÑO': 'Pedidos COSTEÑO',
             'BEES': 'Pedidos BEES'
         })
-        # Ordenado de menor a mayor por penetración de BEES tal como se solicitó
         df_rutas_perf = df_rutas_perf.sort_values(by='% BEES', ascending=True)
         st.dataframe(df_rutas_perf[['Ruta', 'Pedidos COSTEÑO', 'Pedidos BEES', '% BEES']], use_container_width=True, hide_index=True)
 
@@ -287,7 +288,6 @@ if segmento_actual == "🏠 Principal":
         df_pie_grp = df_pie_data.groupby('Canal_UI')['ID_Pedido_Ingresado'].nunique().reset_index()
         
         if not df_pie_grp.empty:
-            # Gráfico agrandado un 5% (de 180 a 195 de altura)
             fig_pie = px.pie(df_pie_grp, values='ID_Pedido_Ingresado', names='Canal_UI', hole=0.4, color_discrete_sequence=['#4A3B5C', '#17A2B8'])
             fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=195, showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -299,7 +299,6 @@ if segmento_actual == "🏠 Principal":
             pct_c = (c_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
             pct_b = (b_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
             
-            # Tarjeta adaptativa (utiliza variables del tema nativo de Streamlit para lucir perfecta en Modo Claro y Oscuro)
             st.markdown(f"""
             <div style="background-color: var(--secondary-background-color); color: var(--text-color); padding: 10px; border-radius: 6px; font-size: 13px; border-left: 4px solid #4A3B5C; text-align: center;">
                 <b>📌 Resumen de Cuotas ({mes_pie_sel}):</b><br>
@@ -315,17 +314,14 @@ if segmento_actual == "🏠 Principal":
     # --- APARTADO: ANÁLISIS DE EFECTIVIDAD LOGÍSTICA ---
     st.markdown("#### ⚙️ Análisis de Efectividad Logística")
     
-    # Grid estructurado: Filtros posicionados estratégicamente sobre sus respectivos elementos visuales
     col_g, col_t = st.columns([2.5, 1.5])
     
     with col_t:
-        # Filtro de Mes Flujo centrado sobre el desglose de fases
         sub_c1, sub_c2, sub_c3 = st.columns([1, 4, 1])
         with sub_c2:
             mes_funnel = st.selectbox("📅 Mes Flujo:", options=meses_existentes, key="funnel_mes_key")
             
     with col_g:
-        # Filtro de segmento posicionado sobre el gráfico de barras
         canal_funnel = st.radio("🏢 Segmento:", ["UNIVERSO", "BEES", "COSTEÑO"], horizontal=True, key="funnel_canal_key")
 
     df_f_base = df_region[df_region['Mes_Ingreso'] == mes_funnel]
