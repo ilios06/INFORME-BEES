@@ -103,22 +103,24 @@ with st.spinner('🔄 Sincronizando y procesando bases de datos operativas...'):
     else:
         df_raw = df_base_raw.copy()
 
-# --- CONTROL LATERAL: FILTROS DE BÚSQUEDA Y SEGMENTOS ---
-st.sidebar.title("🗂️ Filtros de busqueda")
-
-# MODIFICACIÓN SOLICITADA: Estilo moderno e integrado mediante segmented_control (Estilo Pestañas de Plantilla)
+# --- BARRA DE NAVEGACIÓN SUPERIOR (ESTILO PLANTILLA WEB EXCEL/DASHBOARD) ---
 opciones_modulos = ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 Análisis", "🔮 Proyección", "🚧 En proceso"]
-segmento_actual = st.sidebar.segmented_control(
+
+# Se renderiza al tope de la aplicación con visibilidad completa horizontal
+segmento_actual = st.segmented_control(
     "Módulos de Sistema",
     options=opciones_modulos,
-    default="🏠 Principal"
+    default="🏠 Principal",
+    label_visibility="collapsed" # Mantiene el look limpio tipo barra de botones de la plantilla
 )
+
 # Protección preventiva en caso de deselección accidental
 if not segmento_actual:
     segmento_actual = "🏠 Principal"
 
-st.sidebar.divider()
-st.sidebar.subheader("🎛️ Parámetros Globales")
+# --- CONTROL LATERAL: PARÁMETROS GLOBALES ---
+st.sidebar.title("🗂️ Parámetros de Ingestión")
+st.sidebar.subheader("🎛️ Filtros Globales")
 opcion_region = st.sidebar.selectbox("📍 Región Geográfica", ["Lima", "Arequipa", "Ver Todo"], index=2)
 estado_flujo_sel = st.sidebar.selectbox("🔀 Estado de Pedido", ["Ingresados", "Facturados", "Entregados"], index=0)
 
@@ -151,7 +153,6 @@ if segmento_actual == "🏠 Principal":
         
         meses_existentes = sorted([m for m in df_activo['Mes_Ingreso'].unique() if m != "Sin Mes"], key=lambda x: LISTA_MESES_ORDENADOS.index(x) if x in LISTA_MESES_ORDENADOS else 99)
         
-        # Filtros organizados en línea (uno al lado del otro)
         fil1, fil2, fil3 = st.columns([1.5, 1.5, 1.2])
         with fil1:
             meses_sel = st.multiselect("📅 Filtro de Meses a comparar:", options=meses_existentes, default=meses_existentes)
@@ -190,7 +191,6 @@ if segmento_actual == "🏠 Principal":
                 if tipo_grafico == "Unitario (Separados)":
                     fig_trend = make_subplots(rows=len(sel_metrics), cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=sel_metrics)
                     for i, met in enumerate(sel_metrics, 1):
-                        formato = metricas_disp[met][1]
                         y_vals = df_trend[met].values 
                         
                         pct_changes = [0.0] * len(y_vals)
@@ -281,15 +281,17 @@ if segmento_actual == "🏠 Principal":
             'BEES': 'Pedidos BEES'
         })
         df_rutas_perf = df_rutas_perf.sort_values(by='% BEES', ascending=True)
-        st.dataframe(df_rutas_perf[['Ruta', 'Pedidos COSTEÑO', 'Pedidos BEES', '% BEES']], use_container_width=True, hide_index=True)
+        # Forzamos una altura exacta para la tabla de rutas para controlar simetría perfecta
+        st.dataframe(df_rutas_perf[['Ruta', 'Pedidos COSTEÑO', 'Pedidos BEES', '% BEES']], use_container_width=True, hide_index=True, height=310)
 
     with c2:
         st.markdown("**🥧 Participación de Negocio**")
         df_pie_grp = df_pie_data.groupby('Canal_UI')['ID_Pedido_Ingresado'].nunique().reset_index()
         
         if not df_pie_grp.empty:
+            # CORRECCIÓN: Tamaño del gráfico aumentado exactamente un 10% adicional (De 195 a 215)
             fig_pie = px.pie(df_pie_grp, values='ID_Pedido_Ingresado', names='Canal_UI', hole=0.4, color_discrete_sequence=['#4A3B5C', '#17A2B8'])
-            fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10), height=195, showlegend=False)
+            fig_pie.update_layout(margin=dict(t=5, b=5, l=10, r=10), height=215, showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
             total_pedidos_pie = df_pie_grp['ID_Pedido_Ingresado'].sum()
@@ -299,11 +301,11 @@ if segmento_actual == "🏠 Principal":
             pct_c = (c_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
             pct_b = (b_peds / total_pedidos_pie * 100) if total_pedidos_pie > 0 else 0
             
+            # CORRECCIÓN: Letras aumentadas 5% (De 13px a 14px) para lectura impecable manteniendo encapsulamiento
             st.markdown(f"""
-            <div style="background-color: var(--secondary-background-color); color: var(--text-color); padding: 10px; border-radius: 6px; font-size: 13px; border-left: 4px solid #4A3B5C; text-align: center;">
+            <div style="background-color: var(--secondary-background-color); color: var(--text-color); padding: 8px 10px; border-radius: 6px; font-size: 14px; border-left: 4px solid #4A3B5C; text-align: center; line-height: 1.4;">
                 <b>📌 Resumen de Cuotas ({mes_pie_sel}):</b><br>
-                • <b>COSTEÑO:</b> {c_peds:,} und ({pct_c:.2f}%)<br>
-                • <b>BEES:</b> {b_peds:,} und ({pct_b:.2f}%)
+                • <b>COSTEÑO:</b> {c_peds:,} und ({pct_c:.2f}%) &nbsp;|&nbsp; • <b>BEES:</b> {b_peds:,} und ({pct_b:.2f}%)
             </div>
             """, unsafe_allow_html=True)
         else:
