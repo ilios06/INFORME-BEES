@@ -120,42 +120,38 @@ if not segmento_actual:
 st.sidebar.title("🗂️ Parámetros de Ingestión")
 st.sidebar.subheader("🎛️ Filtros Globales")
 
-# Corrección a la lista de Regiones solicitada (LIMA-AREQUIPA-AMBOS)
+# Ajuste estricto de filtros solicitados
 opcion_region = st.sidebar.selectbox("📍 Región Geográfica", ["LIMA", "AREQUIPA", "AMBOS"], index=2)
 estado_flujo_sel = st.sidebar.selectbox("🔀 Estado de Pedido", ["Ingresados", "Facturados", "Entregados"], index=0)
 
-# Mantenimiento y selección global del mes desde la barra lateral
-meses_existentes = sorted([m for m in df_raw['Mes_Ingreso'].unique() if m != "Sin Mes"], key=lambda x: LISTA_MESES_ORDENADOS.index(x) if x in LISTA_MESES_ORDENADOS else 99)
-mes_global_sel = st.sidebar.selectbox("📅 Seleccionar Mes", options=meses_existentes, index=0)
-
+# REGLA DE DESACOPLAMIENTO: Se removió el mes del panel lateral para no asfixiar el análisis temporal de tendencias
 if st.sidebar.button("🔄 Forzar Sincronización"):
     st.cache_data.clear()
     st.rerun()
 
-# --- LÓGICA DE FILTRADO CORE ---
+# --- LÓGICA DE FILTRADO CORE (RESTRICCIONES RAÍZ) ---
 df_region = df_raw.copy()
 if opcion_region == "LIMA":
     df_region = df_raw[df_raw['Zona_OfVta_Clean'] == "LIMA"]
 elif opcion_region == "AREQUIPA":
     df_region = df_raw[df_raw['Zona_OfVta_Clean'] == "AREQUIPA"]
 
-# Filtrar por el mes global seleccionado
-df_mes_activo = df_region[df_region['Mes_Ingreso'] == mes_global_sel]
-
-df_activo = df_mes_activo.copy()
+df_activo = df_region.copy()
 if estado_flujo_sel == "Facturados":
     df_activo = df_activo[df_activo['ID_Factura_Final'].notna() & (df_activo['ID_Factura_Final'].astype(str) != "0") & (df_activo['ID_Factura_Final'].astype(str) != "")]
 elif estado_flujo_sel == "Entregados":
     df_activo = df_activo[df_activo['ID_Factura_Final'].notna() & (df_activo['ID_Factura_Final'].astype(str) != "0") & (df_activo['ID_Factura_Final'].astype(str) != "")]
     df_activo = df_activo[(df_activo['Motivo_Devolucion'].isna()) | (df_activo['Motivo_Devolucion'] == "") | (df_activo['Motivo_Devolucion'].astype(str).str.upper() == "NAN")]
 
+# Extracción segura de la línea de tiempo disponible en caché
+meses_existentes = sorted([m for m in df_raw['Mes_Ingreso'].unique() if m != "Sin Mes"], key=lambda x: LISTA_MESES_ORDENADOS.index(x) if x in LISTA_MESES_ORDENADOS else 99)
 
 # --- RENDERING DE SEGMENTOS ---
 if segmento_actual == "🏠 Principal":
     st.title("🏠 Dashboard Principal Operativo")
-    st.markdown(f"Status actual del panel: Flujo de Pedidos **{estado_flujo_sel}** en **{mes_global_sel}** ({opcion_region})")
+    st.markdown(f"Status actual del panel: Flujo de Pedidos **{estado_flujo_sel}** | Ámbito: **{opcion_region}**")
     
-    # --- PARTE 1: EVOLUCIÓN Y TENDENCIA MENSUAL OPERATIVA ---
+    # --- PARTE 1: EVOLUCIÓN Y TENDENCIA MENSUAL OPERATIVA (AHORA TOTALMENTE LIBRE) ---
     with st.container(border=True):
         st.subheader("📈 Evolución y Tendencia Mensual Operativa")
         
@@ -262,9 +258,9 @@ if segmento_actual == "🏠 Principal":
     # --- PARTE 2: DESGLOSE DE PARTICIPACIÓN Y EFECTIVIDAD ---
     st.subheader("📋 Desglose de Participación y Efectividad")
     
-    m_col1, _ = st.columns([1.5, 3.5])
+    m_col1, _ = st.columns([2.0, 3.0])
     with m_col1:
-        mes_pie_sel = st.selectbox("📅 Seleccionar Mes de Análisis:", options=meses_existentes, key="pie_compact_filter")
+        mes_pie_sel = st.selectbox("📅 Seleccionar Mes de Análisis Interno:", options=meses_existentes, key="pie_compact_filter")
         
     df_pie_data = df_activo[df_activo['Mes_Ingreso'] == mes_pie_sel]
     
@@ -324,7 +320,7 @@ if segmento_actual == "🏠 Principal":
     with col_t:
         sub_c1, sub_c2, sub_c3 = st.columns([1, 4, 1])
         with sub_c2:
-            mes_funnel = st.selectbox("📅 Mes Flujo:", options=meses_existentes, key="funnel_mes_key")
+            mes_funnel = st.selectbox("📅 Mes Flujo Logístico:", options=meses_existentes, key="funnel_mes_key")
             
     with col_g:
         canal_funnel = st.radio("🏢 Segmento:", ["UNIVERSO", "BEES", "COSTEÑO"], horizontal=True, key="funnel_canal_key")
@@ -414,41 +410,44 @@ elif segmento_actual == "📈 Métricas":
     st.title("📈 Métricas Comerciales")
     st.info("Módulo en construcción.")
 
-# --- NUEVO SEGMENTO CORE DE DETALLE SOLICITADO ---
+# --- SEGMENTO DE DETALLE (OPTIMIZADO CON CONTROLES INDEPENDIENTES) ---
 elif segmento_actual == "🔍 Detalle":
     st.title("🔍 Detalle Volumétrico y Conversión Logística")
-    st.markdown(f"Filtros Activos: Región: **{opcion_region}** | Flujo: **{estado_flujo_sel}** | Mes: **{mes_global_sel}**")
     
-    # -----------------------------------------------------------------
-    # ESTRUCTURA EN DONA PARALELA (IZQUIERDA: DATOS | DERECHA: GRÁFICO)
-    # -----------------------------------------------------------------
+    # CONTROL DE ENFOQUE LOCAL: El mes se gobierna de forma independiente en esta Skill
+    sub_filt1, _ = st.columns([2.0, 3.0])
+    with sub_filt1:
+        mes_detalle_sel = st.selectbox("📅 Seleccionar Mes de Enfoque para Detalle:", options=meses_existentes, key="mes_detalle_local_key")
+        
+    st.markdown(f"Filtros Activos: Región: **{opcion_region}** | Flujo: **{estado_flujo_sel}** | Mes Seleccionado: **{mes_detalle_sel}**")
+    
+    # Filtrado en cascada optimizado
+    df_detalle_activo = df_activo[df_activo['Mes_Ingreso'] == mes_detalle_sel]
+    
     st.subheader("📊 Distribución Estructural de Operaciones por Canal")
     
-    # Grid de 2x2 para las 4 métricas críticas
     fila1_col1, fila1_col2 = st.columns(2)
     fila2_col1, fila2_col2 = st.columns(2)
     
-    # 1. Pedidos Únicos
-    peds_c = df_activo[df_activo['Canal_UI'] == 'COSTEÑO']['ID_Pedido_Ingresado'].nunique()
-    peds_b = df_activo[df_activo['Canal_UI'] == 'BEES']['ID_Pedido_Ingresado'].nunique()
+    # Computación de Métricas
+    peds_c = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'COSTEÑO']['ID_Pedido_Ingresado'].nunique()
+    peds_b = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'BEES']['ID_Pedido_Ingresado'].nunique()
     tot_peds = peds_c + peds_b
     
-    # 2. Clientes Únicos
-    cli_c = df_activo[df_activo['Canal_UI'] == 'COSTEÑO']['Codigo_Cliente'].nunique()
-    cli_b = df_activo[df_activo['Canal_UI'] == 'BEES']['Codigo_Cliente'].nunique()
+    cli_c = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'COSTEÑO']['Codigo_Cliente'].nunique()
+    cli_b = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'BEES']['Codigo_Cliente'].nunique()
     tot_cli = cli_c + cli_b
     
-    # 3. Peso Total en Toneladas (Base de datos original asumida en Kg)
-    peso_c = df_activo[df_activo['Canal_UI'] == 'COSTEÑO']['Peso_Ingresado'].sum() / 1000
-    peso_b = df_activo[df_activo['Canal_UI'] == 'BEES']['Peso_Ingresado'].sum() / 1000
+    peso_c = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'COSTEÑO']['Peso_Ingresado'].sum() / 1000
+    peso_b = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'BEES']['Peso_Ingresado'].sum() / 1000
     tot_peso = peso_c + peso_b
     
-    # CORRECCIÓN DE SINTAXIS: Se aisla el divisor condicional de forma segura para evitar SyntaxError
     tc_divisor = TC_FIJO if TC_FIJO > 0 else 3.396
-    gmv_c = df_activo[df_activo['Canal_UI'] == 'COSTEÑO']['TOTAL'].sum() / tc_divisor
-    gmv_b = df_activo[df_activo['Canal_UI'] == 'BEES']['TOTAL'].sum() / tc_divisor
+    gmv_c = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'COSTEÑO']['TOTAL'].sum() / tc_divisor
+    gmv_b = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'BEES']['TOTAL'].sum() / tc_divisor
     tot_gmv = gmv_c + gmv_b
 
+    # FUNCIÓN REESTRUCTURADA: Eliminación total de expresiones complejas en f-strings (Cumplimiento Regla N°4)
     def renderizar_bloque_espejo(columna_target, titulo, total_formateado, val_c, val_b, total_numerico, sufijo=""):
         with columna_target:
             with st.container(border=True):
@@ -458,14 +457,18 @@ elif segmento_actual == "🔍 Detalle":
                 pct_c = (val_c / total_numerico * 100) if total_numerico > 0 else 0
                 pct_b = (val_b / total_numerico * 100) if total_numerico > 0 else 0
                 
+                # Procesamiento previo de máscaras numéricas (Aislamiento Antierror)
+                val_c_disp = f"{val_c:,.2f}" if isinstance(val_c, float) else f"{val_c:,}"
+                val_b_disp = f"{val_b:,.2f}" if isinstance(val_b, float) else f"{val_b:,}"
+                
                 with sub_izq:
                     st.markdown(f"<p style='font-size:22px; font-weight:bold; margin-bottom:2px;'>{total_formateado}</p>", unsafe_allow_html=True)
                     st.markdown("<p style='font-size:11px; color:gray; margin-top:0px;'>Volumen Total Consolidador</p>", unsafe_allow_html=True)
                     
                     html_datos = f"""
                     <div style="font-family: sans-serif; font-size: 14px; margin-top:12px; line-height:1.6;">
-                        <span style="color:#4A3B5C; font-weight:bold;">■ COSTEÑO:</span> {val_c:,.2f if type(val_c)==float else val_c:} {sufijo} <b style="color:gray;">({pct_c:.1f}%)</b><br>
-                        <span style="color:#17A2B8; font-weight:bold;">■ BEES:</span> {val_b:,.2f if type(val_b)==float else val_b:} {sufijo} <b style="color:gray;">({pct_b:.1f}%)</b>
+                        <span style="color:#4A3B5C; font-weight:bold;">■ COSTEÑO:</span> {val_c_disp} {sufijo} <b style="color:gray;">({pct_c:.1f}%)</b><br>
+                        <span style="color:#17A2B8; font-weight:bold;">■ BEES:</span> {val_b_disp} {sufijo} <b style="color:gray;">({pct_b:.1f}%)</b>
                     </div>
                     """
                     st.markdown(html_datos, unsafe_allow_html=True)
@@ -484,7 +487,7 @@ elif segmento_actual == "🔍 Detalle":
                     else:
                         st.caption("Sin transacciones")
 
-    # Renderizado simétrico de los 4 bloques volumétricos
+    # Inyección limpia de bloques volumétricos
     renderizar_bloque_espejo(fila1_col1, "📦 Pedidos Únicos", f"{tot_peds:,} und", peds_c, peds_b, tot_peds, "und")
     renderizar_bloque_espejo(fila1_col2, "👥 Cantidad de Clientes Únicos", f"{tot_cli:,} cli", cli_c, cli_b, tot_cli, "cli")
     renderizar_bloque_espejo(fila2_col1, "⚖️ Peso Total (Representación TN)", f"{tot_peso:,.2f} TN", peso_c, peso_b, tot_peso, "TN")
@@ -492,15 +495,12 @@ elif segmento_actual == "🔍 Detalle":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # -----------------------------------------------------------------
-    # SECCIÓN: RENDIMIENTO DE ETAPAS Y EFECTIVIDAD DEL CANAL
-    # -----------------------------------------------------------------
+    # --- RENDIMIENTO DE ETAPAS Y MATRIZ DE CONVERSIÓN ---
     st.subheader("⚙️ Rendimiento de Etapas y Efectividad del Canal")
     
     canal_log_sel = st.segmented_control("Filtrar Canal Logístico:", options=["UNIVERSO", "BEES", "COSTEÑO"], default="UNIVERSO")
     if not canal_log_sel: canal_log_sel = "UNIVERSO"
     
-    # Función auxiliar interna para calcular los volúmenes puros por etapas
     def obtener_volumen_etapas(df_segmento):
         ingresados = df_segmento['ID_Pedido_Ingresado'].nunique()
         facturados = df_segmento[df_segmento['ID_Factura_Final'].notna() & (df_segmento['ID_Factura_Final'].astype(str) != "0") & (df_segmento['ID_Factura_Final'].astype(str) != "")]['ID_Pedido_Ingresado'].nunique()
@@ -510,11 +510,10 @@ elif segmento_actual == "🔍 Detalle":
     with st.container(border=True):
         st.markdown("#### 📑 Matriz de Conversión Logística por Canal Comercial")
         
-        # Ingesta y cálculo cruzado de fases para los dos canales comerciales directos
-        ing_cost, fac_cost, ent_cost = obtener_volumen_etapas(df_mes_activo[df_mes_activo['Canal_UI'] == 'COSTEÑO'])
-        ing_bees, fac_bees, ent_bees = obtener_volumen_etapas(df_mes_activo[df_mes_activo['Canal_UI'] == 'BEES'])
+        # Conexión directa al set de datos local desacoplado
+        ing_cost, fac_cost, ent_cost = obtener_volumen_etapas(df_detalle_activo[df_detalle_activo['Canal_UI'] == 'COSTEÑO'])
+        ing_bees, fac_bees, ent_bees = obtener_volumen_etapas(df_detalle_activo[df_detalle_activo['Canal_UI'] == 'BEES'])
         
-        # Porcentajes de cambio secuenciales entre fases
         pct_fac_c = (fac_cost / ing_cost * 100) if ing_cost > 0 else 0
         pct_ent_c = (ent_cost / fac_cost * 100) if fac_cost > 0 else 0
         tot_eff_c = (ent_cost / ing_cost * 100) if ing_cost > 0 else 0
@@ -523,7 +522,6 @@ elif segmento_actual == "🔍 Detalle":
         pct_ent_b = (ent_bees / fac_bees * 100) if fac_bees > 0 else 0
         tot_eff_b = (ent_bees / ing_bees * 100) if ing_bees > 0 else 0
 
-        # Construcción estructural del dataframe de conversión
         matriz_conversion_raw = {
             "Canal Comercial": ["COSTEÑO", "BEES"],
             "1. Ingreso (Base)": [f"{ing_cost:,} und", f"{ing_bees:,} und"],
@@ -536,7 +534,6 @@ elif segmento_actual == "🔍 Detalle":
         
         df_matriz_final = pd.DataFrame(matriz_conversion_raw)
         
-        # Filtro interactivo inyección sobre filas
         if canal_log_sel != "UNIVERSO":
             df_matriz_final = df_matriz_final[df_matriz_final['Canal Comercial'] == canal_log_sel]
             
