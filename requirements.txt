@@ -3,5 +3,7 @@ pandas
 numpy
 plotly
 google-api-python-client
-google-auth
+google-oauth2-tool
 openpyxl
+gspread
+google-auth
