@@ -1,9 +1,12 @@
+google-oauth2-tool
+gspread
 streamlit
 pandas
 numpy
 plotly
-google-api-python-client
-google-oauth2-tool
 openpyxl
-gspread
+google-api-python-client
 google-auth
+google-cloud-bigquery
+google-cloud-bigquery-storage
+db-dtypes
