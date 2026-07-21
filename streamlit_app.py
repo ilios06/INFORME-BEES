@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2 import service_account
+from google.cloud import bigquery
 import io
 
 # --- CONFIGURACIÓN DE LA PÁGINA WEB ---
@@ -17,20 +18,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CONSTANTES ---
+# --- CONSTANTES COMERCIALES E INFRAESTRUCTURA ---
 TC_FIJO = 3.396
 LISTA_MESES_ORDENADOS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 FILE_ID_CONCILIACION = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"
 URL_MAESTRO_SKU = "https://docs.google.com/spreadsheets/d/1r1aJNiDvArFqEfAGJ6i8hq_zAo8G5lAc7uW6pXhylZo/export?format=xlsx&gid=1445055226"
 
-# --- PERSISTENCIA E INICIALIZACIÓN DE ESTADO GLOBAL (1° NIVEL - AUTO-EFICIENCIA) ---
+# --- PERSISTENCIA E INICIALIZACIÓN DE ESTADO GLOBAL (1° NIVEL) ---
 if 'log_linaje' not in st.session_state: st.session_state.log_linaje = {"status": "OK", "alertas": []}
 if 'filtro_region' not in st.session_state: st.session_state.filtro_region = "AMBOS"
 if 'filtro_flujo' not in st.session_state: st.session_state.filtro_flujo = "Ingresados"
 if 'filtro_mes_detalle' not in st.session_state: st.session_state.filtro_mes_detalle = "Enero"
 if 'filtro_canal_log' not in st.session_state: st.session_state.filtro_canal_log = "UNIVERSO"
 
-# --- CAPA DE VALIDACIÓN DE LINAJE DE INGESTIÓN (MEJORA 1) ---
+# --- CAPA DE VALIDACIÓN DE LINAJE DE INGESTIÓN ---
 def validar_linaje_columnas(df, esquema_esperado):
     alertas = []
     df_columnas = df.columns.tolist()
@@ -61,7 +62,7 @@ def validar_linaje_columnas(df, esquema_esperado):
         st.session_state.log_linaje = {"status": "ADVERTENCIA", "alertas": alertas}
     return df
 
-# --- CONEXIÓN DRIVE ---
+# --- CONEXIÓN DRIVE Y GCP ---
 @st.cache_resource
 def obtener_servicio_drive():
     try:
@@ -72,7 +73,7 @@ def obtener_servicio_drive():
         st.error(f"❌ Error de autenticación en Drive: {e}")
         return None
 
-# --- DESCARGA DE DATOS ---
+# --- DESCARGA DE DATOS OPERATIVOS ---
 @st.cache_data(ttl=3600)
 def descargar_datos_maestros(file_id):
     service = obtener_servicio_drive()
@@ -135,6 +136,37 @@ def descargar_maestro_sku_directo(url_exportacion):
         st.error(f"⚠️ Alerta Bypass SKU: {e}")
         return pd.DataFrame()
 
+# --- CARGADOR PREDICTIVO PASO 8: CONSULTA Y CACHÉ BIGQUERY ML ---
+@st.cache_data(ttl=3600)
+def cargar_proyecciones_bigquery():
+    """
+    Obtiene la proyección unificada a 3 meses generada por BigQuery ML.
+    Aplica caché de 1 hora para evitar re-consultas innecesarias a GCP.
+    """
+    try:
+        info_claves = st.secrets["gcp_service_account"]
+        creds = service_account.Credentials.from_service_account_info(info_claves)
+        client = bigquery.Client(credentials=creds, project=info_claves.get("project_id", "dashboard-bees-costeno"))
+    except Exception:
+        client = bigquery.Client()
+    
+    # 1. Carga Métricas Mensuales de Fuga Predictiva
+    query_fuga = """
+        SELECT * FROM `dashboard-bees-costeno.conciliacion_ia.v_proyeccion_mensual_fuga`
+        ORDER BY segmento, mes_proyectado
+    """
+    df_fuga = client.query(query_fuga).to_dataframe()
+    
+    # 2. Carga Serie Diaria Completa (para gráficos de tendencia y SKUs)
+    query_diaria = """
+        SELECT fecha_proyectada, segmento, metrica, eje, valor_proyectado
+        FROM `dashboard-bees-costeno.conciliacion_ia.v_proyeccion_unificada`
+        ORDER BY fecha_proyectada
+    """
+    df_diaria = client.query(query_diaria).to_dataframe()
+    
+    return df_fuga, df_diaria
+
 # --- INGESTIÓN CORE ---
 with st.spinner('🔄 Sincronizando y verificando linaje de bases operativas...'):
     df_base_raw = descargar_datos_maestros(FILE_ID_CONCILIACION)
@@ -153,7 +185,7 @@ if st.session_state.log_linaje["status"] == "ADVERTENCIA":
         for alerta in st.session_state.log_linaje["alertas"]:
             st.caption(alerta)
 
-# --- PANEL DE CONTROL LATERAL CON ESTADOS PERSISTENTES (MEJORA 2) ---
+# --- PANEL DE CONTROL LATERAL CON ESTADOS PERSISTENTES ---
 st.sidebar.title("🗂️ Parámetros de Ingestión")
 st.sidebar.subheader("🎛️ Filtros Globales")
 
@@ -196,7 +228,7 @@ opciones_modulos = ["🏠 Principal", "📊 Resumen", "📈 Métricas", "🔍 De
 segmento_actual = st.segmented_control("Módulos de Sistema", options=opciones_modulos, default="🏠 Principal", label_visibility="collapsed")
 if not segmento_actual: segmento_actual = "🏠 Principal"
 
-# --- RENDERIZADO DE MODULE SKILLS ---
+# --- RENDERIZADO MÓDULO: PRINCIPAL ---
 if segmento_actual == "🏠 Principal":
     st.title("🏠 Dashboard Principal Operativo")
     st.markdown(f"Status actual del panel: Flujo de Pedidos **{st.session_state.filtro_flujo}** | Ámbito: **{st.session_state.filtro_region}**")
@@ -359,15 +391,10 @@ if segmento_actual == "🏠 Principal":
         </div>
         """, unsafe_allow_html=True)
 
-elif segmento_actual in ["📊 Resumen", "📈 Métricas", "🔮 Proyección", "🚧 En proceso"]:
-    st.title(f"{segmento_actual}")
-    st.info("Módulo analítico estructurado en caché. Listo para inyección lógica.")
-
-# --- MODULE SKILL: DETALLE (COMPACTO Y FORMATO HTML PROTEGIDO) ---
+# --- RENDERIZADO MÓDULO: DETALLE ---
 elif segmento_actual == "🔍 Detalle":
     st.title("🔍 Detalle Volumétrico y Conversión Logística")
     
-    # ENTORNO INTER-MÓDULO BINDEADO (MEJORA 2)
     sub_filt1, _ = st.columns([2.0, 3.0])
     with sub_filt1:
         st.session_state.filtro_mes_detalle = st.selectbox(
@@ -399,7 +426,6 @@ elif segmento_actual == "🔍 Detalle":
     gmv_b = df_detalle_activo[df_detalle_activo['Canal_UI'] == 'BEES']['TOTAL'].sum() / TC_FIJO
     tot_gmv = gmv_c + gmv_b
 
-    # FORMATO PROTEGIDO CON INYECCIÓN DE TOOLTIPS CONTEXTUALES (MEJORA 3)
     def renderizar_bloque_espejo(columna_target, titulo, total_formateado, val_c, val_b, total_numerico, tooltip, sufijo=""):
         with columna_target:
             with st.container(border=True):
@@ -430,7 +456,6 @@ elif segmento_actual == "🔍 Detalle":
     renderizar_bloque_espejo(fila2_col1, "⚖️ Peso Total", f"{tot_peso:,.2f} TN", peso_c, peso_b, tot_peso, "Masa calculada en Toneladas Métricas (Kilogramos base divididos entre 1,000).", "TN")
     renderizar_bloque_espejo(fila2_col2, "💵 Capital Total", f"$ {tot_gmv:,.2f}", gmv_c, gmv_b, tot_gmv, f"Monto financiero dolarizado aplicando la tasa corporativa mandatoria de S/. {TC_FIJO}.", "USD")
 
-    # MATRIZ DE CONVERSIÓN CON ESTADO BINDEADO
     st.markdown("<br>", unsafe_allow_html=True)
     st.subheader("⚙️ Rendimiento de Etapas y Efectividad del Canal")
     
@@ -444,7 +469,7 @@ elif segmento_actual == "🔍 Detalle":
     
     def obtener_volumen_etapas(df_segmento):
         ingresados = df_segmento['ID_Pedido_Ingresado'].nunique()
-        facturados = df_segmento[df_segmento['ID_Factura_Final'].notna() & (df_segmento['ID_Factura_Final'].astype(str) != "0") & (df_segmento['ID_Factura_Final'].astype(str) != "")]['ID_Pedido_Ingresado'].nunique()
+        facturados = df_segmento[df_segmento['ID_Factura_Final'].notna() & (df_segmento['ID_Factura_Final'].astype(str) != "0") & (df_segmento['ID_Factura_Final'].astype(str) != "")]["ID_Pedido_Ingresado"].nunique()
         entregados = df_segmento[df_segmento['ID_Factura_Final'].notna() & (df_segmento['ID_Factura_Final'].astype(str) != "0") & (df_segmento['ID_Factura_Final'].astype(str) != "") & ((df_segmento['Motivo_Devolucion'].isna()) | (df_segmento['Motivo_Devolucion'] == "") | (df_segmento['Motivo_Devolucion'].astype(str).str.upper() == "NAN"))]['ID_Pedido_Ingresado'].nunique()
         return ingresados, facturados, entregados
 
@@ -466,3 +491,144 @@ elif segmento_actual == "🔍 Detalle":
         if st.session_state.filtro_canal_log != "UNIVERSO":
             df_matriz_final = df_matriz_final[df_matriz_final['Canal Comercial'] == st.session_state.filtro_canal_log]
         st.dataframe(df_matriz_final, use_container_width=True, hide_index=True)
+
+# --- RENDERIZADO MÓDULO PREDICTIVO: PROYECCIÓN (PASO 8 COMPLETO) ---
+elif segmento_actual == "🔮 Proyección":
+    st.title("🔮 Proyección Inteligente a 3 Meses (BigQuery ML ARIMA_PLUS)")
+    st.caption("Fuga Predictiva, Demanda vs Facturación y Volumen Top SKUs Líderes (en Miles de Unidades)")
+    
+    try:
+        df_fuga, df_diaria = cargar_proyecciones_bigquery()
+        
+        # Selector de Segmento Comercial / Canal Logístico
+        segmentos_disponibles = ['UNIVERSO', 'PEDIDO BEES', 'GENERAL']
+        
+        segmento_sel = st.selectbox(
+            "🌐 Seleccionar Canal Logístico / Segmento:", 
+            segmentos_disponibles,
+            index=0,
+            help="Aísla el modelo predictivo de BigQuery ML por canal: UNIVERSO (Consolidado), PEDIDO BEES o GENERAL (Costeño)."
+        )
+        
+        # Filtrar dataframes por segmento
+        df_fuga_seg = df_fuga[df_fuga['segmento'] == segmento_sel].copy()
+        df_diaria_seg = df_diaria[df_diaria['segmento'] == segmento_sel].copy()
+
+        # -------------------------------------------------------------------------
+        # BLOQUE 1: KPIs RESUMEN ACUMULADO (3 MESES / 90 DÍAS)
+        # -------------------------------------------------------------------------
+        st.subheader("📊 Totales Proyectados para los Próximos 90 Días")
+        
+        tot_dinero_ingresado = df_fuga_seg['dinero_ingresado_soles'].sum() if 'dinero_ingresado_soles' in df_fuga_seg.columns else 0
+        tot_dinero_facturado = df_fuga_seg['dinero_facturado_soles'].sum() if 'dinero_facturado_soles' in df_fuga_seg.columns else 0
+        tot_fuga_dinero = df_fuga_seg['fuga_dinero_soles'].sum() if 'fuga_dinero_soles' in df_fuga_seg.columns else 0
+        pct_fuga_prom = (tot_fuga_dinero / tot_dinero_ingresado * 100) if tot_dinero_ingresado > 0 else 0
+        tot_peso_ingresado = df_fuga_seg['peso_ingresado_toneladas'].sum() if 'peso_ingresado_toneladas' in df_fuga_seg.columns else 0
+
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric(
+            "Demanda Total (S/.)", 
+            f"S/ {tot_dinero_ingresado:,.2f}", 
+            help=f"Equivalente a USD ${tot_dinero_ingresado/TC_FIJO:,.2f} (Tasa Corporativa Fija: {TC_FIJO})"
+        )
+        kpi2.metric(
+            "Facturación Estimada (S/.)", 
+            f"S/ {tot_dinero_facturado:,.2f}",
+            delta=f"-S/ {tot_fuga_dinero:,.2f} Fuga"
+        )
+        kpi3.metric(
+            "Tasa de Fuga Predictiva", 
+            f"{pct_fuga_prom:.2f}%", 
+            delta_color="inverse",
+            help="Porcentaje estimado de la demanda que no se convertirá en dinero facturado de caja."
+        )
+        kpi4.metric(
+            "Peso Demanda (Tn)", 
+            f"{tot_peso_ingresado:,.2f} Tn",
+            help="Masa total proyectada en Toneladas Métricas para planificación logitudinal."
+        )
+
+        st.divider()
+
+        # -------------------------------------------------------------------------
+        # BLOQUE 2: TENDENCIA DIARIA Y DESGLOSE MENSUAL (DEMANDA VS OPERACIÓN)
+        # -------------------------------------------------------------------------
+        col_graf, col_tabla = st.columns([6, 4])
+        
+        with col_graf:
+            st.subheader("📈 Tendencia Diaria: Demanda vs Facturación")
+            df_diaria_dinero = df_diaria_seg[df_diaria_seg['metrica'].isin(['dinero_ingresado', 'dinero_facturado'])].copy()
+            
+            if not df_diaria_dinero.empty:
+                fig_pred = px.line(
+                    df_diaria_dinero,
+                    x='fecha_proyectada',
+                    y='valor_proyectado',
+                    color='metrica',
+                    labels={'metrica': 'Eje Comercial', 'valor_proyectado': 'Monto (S/.)', 'fecha_proyectada': 'Fecha'},
+                    color_discrete_map={'dinero_ingresado': '#17A2B8', 'dinero_facturado': '#4A3B5C'}
+                )
+                fig_pred.update_layout(
+                    height=380, 
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_pred, use_container_width=True)
+            else:
+                st.info("Sin registros diarios de montos financieros para graficar.")
+
+        with col_tabla:
+            st.subheader("📋 Desglose Mensual y Fuga")
+            columnas_visibles = [
+                'nombre_mes', 'dinero_ingresado_soles', 'dinero_facturado_soles', 
+                'fuga_dinero_soles', 'pct_fuga_dinero'
+            ]
+            cols_existentes = [c for c in columnas_visibles if c in df_fuga_seg.columns]
+            
+            if not df_fuga_seg.empty and len(cols_existentes) > 0:
+                df_tabla_fuga = df_fuga_seg[cols_existentes].rename(columns={
+                    'nombre_mes': 'Mes',
+                    'dinero_ingresado_soles': 'Demanda (S/.)',
+                    'dinero_facturado_soles': 'Facturado (S/.)',
+                    'fuga_dinero_soles': 'Fuga (S/.)',
+                    'pct_fuga_dinero': '% Fuga'
+                })
+                st.dataframe(df_tabla_fuga, use_container_width=True, hide_index=True, height=300)
+            else:
+                st.info("Sin datos de agregación mensual.")
+
+        st.divider()
+
+        # -------------------------------------------------------------------------
+        # BLOQUE 3: PROYECCIÓN TOP SKUs (EN MILES DE UNIDADES)
+        # -------------------------------------------------------------------------
+        st.subheader("📦 Proyección de Volumen para Top SKUs Líderes (en Miles de Unidades)")
+        
+        df_skus = df_diaria_seg[df_diaria_seg['metrica'].str.startswith('SKU_')].copy()
+        if not df_skus.empty:
+            df_skus['sku'] = df_skus['metrica'].str.replace('SKU_', '')
+            df_skus_agrupado = df_skus.groupby('sku')['valor_proyectado'].sum() / 1000.0  # Expresado en Miles
+            df_skus_agrupado = df_skus_agrupado.reset_index().sort_values('valor_proyectado', ascending=False)
+            
+            fig_sku = px.bar(
+                df_skus_agrupado,
+                x='sku',
+                y='valor_proyectado',
+                text_auto='.2f',
+                labels={'sku': 'Código SKU', 'valor_proyectado': 'Miles de Unidades'},
+                color='valor_proyectado',
+                color_continuous_scale='Purples'
+            )
+            fig_sku.update_layout(height=350, margin=dict(l=10, r=10, t=30, b=10))
+            st.plotly_chart(fig_sku, use_container_width=True)
+        else:
+            st.info("No hay series temporales de SKUs registradas para este segmento.")
+
+    except Exception as e:
+        st.error(f"❌ Error al conectar con las vistas de BigQuery ML: {e}")
+        st.info("Verifica que las credenciales `st.secrets['gcp_service_account']` estén configuradas y que la vista `v_proyeccion_mensual_fuga` haya sido creada en GCP.")
+
+# --- RENDERIZADO MÓDULOS EN DESARROLLO ---
+elif segmento_actual in ["📊 Resumen", "📈 Métricas", "🚧 En proceso"]:
+    st.title(f"{segmento_actual}")
+    st.info("Módulo analítico estructurado en caché. Listo para inyección lógica.")
