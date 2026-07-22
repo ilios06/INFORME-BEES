@@ -22,7 +22,7 @@ st.set_page_config(
 TC_FIJO = 3.396
 LISTA_MESES_ORDENADOS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 FILE_ID_CONCILIACION = "1-EoM0rYAmYY_tBkKwL5--746cdUa0tw2"
-URL_MAESTRO_SKU = "https://docs.google.com/spreadsheets/d/1r1aJNiDvArFqEfAGJ6i8hq_zAo8G5lAc7uW6pXhylZo/export?format=xlsx&gid=1445055226"
+URL_MAESTRO_SKU = "https://docs.google.com/spreadsheets/d/1Zck2x0VPW-zeQ8YjD6LbXw9uPavycYHrNXud-nG5uBc/edit?usp=sharing"
 
 # --- PERSISTENCIA E INICIALIZACIÓN DE ESTADO GLOBAL (1° NIVEL) ---
 if 'log_linaje' not in st.session_state: st.session_state.log_linaje = {"status": "OK", "alertas": []}
