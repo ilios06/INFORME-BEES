@@ -9,7 +9,7 @@ import streamlit as st
 
 from config.settings import APP_NAME, DATA_CACHE_TTL_SECONDS, PALETTE, SOURCE_SECRET_KEYS
 from src.analytics.metrics import funnel_metrics, quality_metrics
-from src.data.drive_loader import SourceConfigurationError, drive_service, read_google_sheet
+from src.data.drive_loader import SourceConfigurationError, drive_service, read_google_sheet, sheets_service
 from src.processing.cleaner import SchemaError, clean_conciliation
 from src.processing.reconciler import apply_business_rules, combine_general_and_recent, merge_master
 
@@ -47,12 +47,21 @@ def get_drive():
     return drive_service(account)
 
 
+@st.cache_resource
+def get_sheets():
+    account = st.secrets.get("gcp_service_account")
+    if not account:
+        raise SourceConfigurationError("Falta la cuenta de servicio de solo lectura.")
+    return sheets_service(account)
+
+
 @st.cache_data(ttl=DATA_CACHE_TTL_SECONDS, show_spinner=False)
 def load_dashboard_data() -> tuple[pd.DataFrame, list[str]]:
     service = get_drive()
-    general_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["general"]), "Conciliacion")
-    recent_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["recent"]), "Conciliacion")
-    master_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["master"]), "Maestro_skus")
+    sheets = get_sheets()
+    general_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["general"]), "Conciliacion", sheets)
+    recent_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["recent"]), "Conciliacion", sheets)
+    master_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["master"]), "Maestro_skus", sheets)
     general, general_warnings = clean_conciliation(general_raw, "GENERAL")
     recent, recent_warnings = clean_conciliation(recent_raw, "3M")
     combined = combine_general_and_recent(general, recent, date.today())

@@ -11,6 +11,7 @@ El dashboard puede ser público para quien tenga su URL, pero muestra solo agreg
 3. La aplicación exporta los libros con Drive API autenticada; no depende de enlaces de descarga pública.
 4. Errores de autenticación y fuente no muestran secretos ni detalles técnicos al visitante.
 5. La visualización solo usa gráficos y métricas agregadas; los controles de Plotly no permiten descargar datos.
+6. Si un libro supera el límite de exportación de Drive, se lee por rangos mediante Sheets API con alcance `spreadsheets.readonly`.
 
 ## Límite importante
 
