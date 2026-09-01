@@ -1,0 +1,5 @@
+{
+  "FALLA_LOGISTICA": ["dev vto", "fuera horario", "no despacho", "no alcanzo", "producto cambiado", "producto dañado", "rechazo calidad"],
+  "FALLA_ADMINISTRATIVA": ["dif precio", "factura mal", "no solicitado", "pedido repetido", "zcost error", "zcost no solicitado"],
+  "RECHAZO_CLIENTE": ["overstock", "closed", "client absent", "no change", "no cash"]
+}

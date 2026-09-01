@@ -1,0 +1,1 @@
+"""Conectores de solo lectura."""
