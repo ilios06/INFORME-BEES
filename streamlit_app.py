@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -57,11 +58,23 @@ def get_sheets():
 
 @st.cache_data(ttl=DATA_CACHE_TTL_SECONDS, show_spinner=False)
 def load_dashboard_data() -> tuple[pd.DataFrame, list[str]]:
-    service = get_drive()
-    sheets = get_sheets()
-    general_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["general"]), "Conciliacion", sheets)
-    recent_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["recent"]), "Conciliacion", sheets)
-    master_raw = read_google_sheet(service, get_secret(SOURCE_SECRET_KEYS["master"]), "Maestro_skus", sheets)
+    account = st.secrets.get("gcp_service_account")
+    if not account:
+        raise SourceConfigurationError("Falta la cuenta de servicio de solo lectura.")
+    source_ids = {key: get_secret(secret_key) for key, secret_key in SOURCE_SECRET_KEYS.items()}
+
+    def fetch(source_key: str, sheet_name: str) -> pd.DataFrame:
+        return read_google_sheet(
+            drive_service(account), source_ids[source_key], sheet_name, sheets_service(account)
+        )
+
+    # Dos conexiones como máximo: reduce el arranque sin saturar Sheets API.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        general_future = executor.submit(fetch, "general", "Conciliacion")
+        recent_future = executor.submit(fetch, "recent", "Conciliacion")
+        general_raw = general_future.result()
+        recent_raw = recent_future.result()
+    master_raw = fetch("master", "Maestro_skus")
     general, general_warnings = clean_conciliation(general_raw, "GENERAL")
     recent, recent_warnings = clean_conciliation(recent_raw, "3M")
     combined = combine_general_and_recent(general, recent, date.today())
