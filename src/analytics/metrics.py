@@ -32,6 +32,7 @@ def quality_metrics(frame: pd.DataFrame) -> dict[str, int]:
         "missing_master_rows": int(frame["sku_master_status"].eq("SIN_MAESTRO").sum()),
         "invalid_ingress_date_rows": int(frame["Fecha_Ingreso_DT"].isna().sum()),
         "source_numeric_missing": int(frame.filter(regex="__missing_source$").sum().sum()),
+        "invalid_numeric_format": int(frame.filter(regex="__invalid_format$").sum().sum()),
         "ac_nonzero_multi_line_orders": int(
             (frame.loc[frame["Saldo_Total_Pedido"].fillna(0) != 0]
              .groupby("ID_Pedido_Ingresado").size() > 1).sum()
