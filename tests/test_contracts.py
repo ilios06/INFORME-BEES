@@ -10,7 +10,7 @@ from src.processing.cleaner import clean_conciliation
 from src.processing.reconciler import apply_business_rules, combine_general_and_recent, merge_master
 
 
-def raw_row(order: str, when: str, invoice: str = "", ac: int = 0) -> dict:
+def raw_row(order: str, when: str, invoice: str = "", ac: int | float | str = 0) -> dict:
     row = {column: "" for column in CONCILIATION_COLUMNS}
     row.update({"ID_Pedido_Ingresado": order, "SKU_Material_Ingresado": "SKU-1", "Fecha_Ingreso": when, "ID_Factura_Final": invoice, "Cantidad_Ingresada": 1, "Valor_Neto_Ingresado": 0, "TOTAL": 0, "Saldo_Total_Pedido": ac, "Tipo_Pedido": "PEDIDO BEES"})
     return row
@@ -33,6 +33,10 @@ class ConciliationContractsTest(unittest.TestCase):
         self.assertEqual(values["invoiced_orders"], 1)
         self.assertEqual(values["final_value"], 25)
         self.assertTrue(frame.loc[0, "is_promotional"])
+
+    def test_regional_decimal_values_are_preserved_for_final_value(self):
+        frame, _ = clean_conciliation(pd.DataFrame([raw_row("A", "01/08/2026", "F-1", "57,992838")]), "3M")
+        self.assertAlmostEqual(frame.loc[0, "Saldo_Total_Pedido"], 57.992838)
 
     def test_business_status_and_missing_master_are_explicit(self):
         frame, _ = clean_conciliation(pd.DataFrame([raw_row("A", "01/08/2026", "", 20), raw_row("B", "01/08/2026", "F-1", 20)]), "3M")
