@@ -10,6 +10,7 @@ import streamlit as st
 
 from config.settings import APP_NAME, DATA_CACHE_TTL_SECONDS, PALETTE, SOURCE_SECRET_KEYS, recent_window_start
 from src.analytics.metrics import funnel_metrics, quality_metrics
+from src.analytics.public_dashboard import render_operations
 from src.data.drive_loader import SourceConfigurationError, drive_service, read_google_sheet, sheets_service
 from src.processing.cleaner import SchemaError, clean_conciliation
 from src.processing.reconciler import apply_business_rules, combine_general_and_recent, merge_master
@@ -68,6 +69,7 @@ def load_dashboard_data() -> tuple[pd.DataFrame, list[str]]:
     if not account:
         raise SourceConfigurationError("Falta la cuenta de servicio de solo lectura.")
     source_ids = {key: get_secret(secret_key) for key, secret_key in SOURCE_SECRET_KEYS.items()}
+    account = dict(account)  # Materialize secrets on the main thread before workers.
 
     def fetch(source_key: str, sheet_name: str) -> pd.DataFrame:
         return read_google_sheet(drive_service(account), source_ids[source_key], sheet_name, sheets_service(account))
@@ -157,6 +159,12 @@ def main() -> None:
             st.cache_data.clear(); st.rerun()
     if period is None:
         st.info("Selecciona fecha de inicio y cierre."); return
+    section = st.radio('Navegación', ['Resumen', 'Control de fugas', 'Canales', 'Rutas', 'Fricción'],
+                       horizontal=True, key='dashboard_section')
+    st.caption(f"Zona: {zone} · Canal: {channel} · {period[0]:%d/%m/%Y} — {period[1]:%d/%m/%Y}")
+    if section != 'Resumen':
+        render_operations(data, section, period, zone, channel)
+        return
     active = filtered_data(data, zone, channel, (pd.Timestamp(period[0]), pd.Timestamp(period[1])))
     if active.empty:
         st.info("No hay pedidos para esta combinación. Ajusta los filtros para ver los indicadores.")
