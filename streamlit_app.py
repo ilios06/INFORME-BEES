@@ -20,25 +20,28 @@ st.set_page_config(page_title=APP_NAME, layout="wide", initial_sidebar_state="co
 
 def inject_design_tokens() -> None:
     st.markdown(f"""<style>
-    :root {{ color-scheme: dark; }}
-    .stApp {{ background: {PALETTE['canvas']}; color: {PALETTE['text']}; }}
+    :root {{ color-scheme: light dark; --canvas: #F6F8FC; --surface: #FFFFFF; --card: #FFFFFF; --text: #172033; --muted: #536078; --border: #CCD5E1; --shadow: rgba(15, 23, 42, .10); --focus: #5140C9; }}
+    @media (prefers-color-scheme: dark) {{ :root {{ --canvas: {PALETTE['canvas']}; --surface: {PALETTE['surface']}; --card: {PALETTE['card']}; --text: {PALETTE['text']}; --muted: {PALETTE['muted']}; --border: {PALETTE['border']}; --shadow: rgba(0, 0, 0, .24); --focus: {PALETTE['primary']}; }} }}
+    .stApp, [data-testid="stAppViewContainer"] {{ background: var(--canvas); color: var(--text); }}
     .main .block-container {{ max-width: 1440px; padding-top: 2rem; padding-bottom: 2.75rem; }}
-    [data-testid="stSidebar"] {{ background: {PALETTE['surface']}; border-right: 1px solid {PALETTE['border']}; }}
-    [data-testid="stMetric"], [data-testid="stVerticalBlockBorderWrapper"] {{ background: {PALETTE['card']}; border: 1px solid {PALETTE['border']}; border-radius: 10px; transition: border-color 160ms cubic-bezier(.2,.8,.2,1), transform 160ms cubic-bezier(.2,.8,.2,1), box-shadow 160ms cubic-bezier(.2,.8,.2,1); }}
-    @media (hover: hover) and (pointer: fine) {{ [data-testid="stMetric"]:hover, [data-testid="stVerticalBlockBorderWrapper"]:hover {{ border-color: {PALETTE['primary']}; transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0,0,0,.18); }} }}
-    .stButton > button {{ min-height: 2.65rem; border-radius: 8px; border-color: {PALETTE['border']}; color: {PALETTE['text']}; background: {PALETTE['surface']}; transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease; touch-action: manipulation; }}
+    [data-testid="stHeader"] {{ background: transparent; }}
+    [data-testid="stSidebar"] {{ background: var(--surface); border-right: 1px solid var(--border); }}
+    [data-testid="stMetric"], [data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 1px 2px var(--shadow); transition: border-color 160ms cubic-bezier(.2,.8,.2,1), transform 160ms cubic-bezier(.2,.8,.2,1), box-shadow 160ms cubic-bezier(.2,.8,.2,1); }}
+    [data-testid="stMetricLabel"], [data-testid="stMetricValue"], .stMarkdown, .stText, label, [data-testid="stWidgetLabel"] {{ color: var(--text); }}
+    [data-testid="stCaptionContainer"], .stCaption, .stCaption p {{ color: var(--muted) !important; }}
+    @media (hover: hover) and (pointer: fine) {{ [data-testid="stMetric"]:hover, [data-testid="stVerticalBlockBorderWrapper"]:hover {{ border-color: var(--focus); transform: translateY(-1px); box-shadow: 0 8px 20px var(--shadow); }} }}
+    .stButton > button {{ min-height: 2.65rem; border-radius: 8px; border-color: var(--border); color: var(--text); background: var(--surface); transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease; touch-action: manipulation; }}
     .stButton > button:active {{ transform: translateY(1px); }}
-    button:focus-visible, [role="combobox"]:focus-visible {{ outline: 3px solid rgba(124,92,255,.58); outline-offset: 2px; }}
-    .eyebrow {{ color: {PALETTE['muted']}; font-size: .78rem; font-weight: 650; letter-spacing: .11em; text-transform: uppercase; }}
-    .app-title {{ color: {PALETTE['text']}; margin: .1rem 0 .35rem; font-size: clamp(1.65rem, 3vw, 2.4rem); }}
-    .app-subtitle {{ color: {PALETTE['muted']}; margin: 0 0 1.3rem; }}
-    .skeleton {{ height: 100px; border-radius: 10px; background: linear-gradient(100deg, {PALETTE['card']} 32%, {PALETTE['surface']} 46%, {PALETTE['card']} 62%); background-size: 220% 100%; animation: shimmer 1.2s linear infinite; border: 1px solid {PALETTE['border']}; }}
+    button:focus-visible, [role="combobox"]:focus-visible, input:focus-visible {{ outline: 3px solid var(--focus); outline-offset: 2px; }}
+    .eyebrow {{ color: var(--muted); font-size: .78rem; font-weight: 650; letter-spacing: .11em; text-transform: uppercase; }}
+    .app-title {{ color: var(--text); margin: .1rem 0 .35rem; font-size: clamp(1.65rem, 3vw, 2.4rem); line-height: 1.15; overflow-wrap: anywhere; }}
+    .app-subtitle {{ color: var(--muted); margin: 0 0 1.3rem; line-height: 1.5; }}
+    .skeleton {{ height: 100px; border-radius: 10px; background: linear-gradient(100deg, var(--card) 32%, var(--surface) 46%, var(--card) 62%); background-size: 220% 100%; animation: shimmer 1.2s linear infinite; border: 1px solid var(--border); }}
     @keyframes shimmer {{ to {{ background-position: -220% 0; }} }}
-    .quality-note {{ color: {PALETTE['muted']}; font-size: .88rem; }}
+    .quality-note {{ color: var(--muted); font-size: .88rem; }}
     @media (max-width: 740px) {{ .main .block-container {{ padding: 1.25rem 1rem 2rem; }} .app-subtitle {{ margin-bottom: 1rem; }} [data-testid="stMetric"] {{ padding: .7rem; }} }}
     @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ animation: none !important; transition: none !important; scroll-behavior: auto !important; }} }}
     </style>""", unsafe_allow_html=True)
-
 
 def get_secret(name: str) -> str:
     value = st.secrets.get(name, "")
