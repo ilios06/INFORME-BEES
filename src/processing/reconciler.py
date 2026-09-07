@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
 from config.settings import recent_window_start
-from src.processing.cleaner import fold_text, normalized_text
+from src.processing.cleaner import fold_text, normalized_text, fold_series, normalized_series
 
 
 def combine_general_and_recent(general: pd.DataFrame, recent: pd.DataFrame, today: date) -> pd.DataFrame:
@@ -31,9 +32,14 @@ def classify_return_reason(reason: object, mapping: dict[str, list[str]]) -> str
 def apply_business_rules(frame: pd.DataFrame, mapping_path: Path) -> pd.DataFrame:
     mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     result = frame.copy()
-    result["Motivo_Devolucion_Categoria"] = result["Motivo_Devolucion"].map(
-        lambda value: classify_return_reason(value, mapping)
-    )
+    reasons = fold_series(result['Motivo_Devolucion'])
+    result['Motivo_Devolucion_Categoria'] = 'OTROS_POR_REVISAR'
+    unmatched = reasons.ne('')
+    result.loc[~unmatched, 'Motivo_Devolucion_Categoria'] = 'SIN_DEVOLUCION'
+    for category, patterns in mapping.items():
+        matches = unmatched & reasons.str.contains('|'.join(re.escape(p) for p in patterns), regex=True)
+        result.loc[matches, 'Motivo_Devolucion_Categoria'] = category
+        unmatched &= ~matches
     result["is_return"] = result["Motivo_Devolucion_Categoria"].ne("SIN_DEVOLUCION")
     result["Saldo_Total_Pedido"] = result["Saldo_Total_Pedido"].fillna(0)
     result["Estado_Conciliacion"] = "ENTREGADO_TOTAL"
@@ -52,13 +58,13 @@ def merge_master(frame: pd.DataFrame, master: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError("Maestro SKU incompleto: " + ", ".join(sorted(missing)))
     catalog = master.loc[:, ["Material", "Marca", "Categoria Cuota"]].copy()
-    catalog["Material"] = catalog["Material"].map(normalized_text)
+    catalog["Material"] = normalized_series(catalog["Material"])
     duplicated = catalog["Material"].duplicated(keep=False)
     if duplicated.any():
         sample = ", ".join(catalog.loc[duplicated, "Material"].head(5))
         raise ValueError(f"Maestro SKU no es unico; ejemplo: {sample}")
     result = frame.merge(catalog, how="left", left_on="SKU_Material_Ingresado", right_on="Material", validate="m:1")
     result["sku_master_status"] = result["Material"].notna().map({True: "EN_MAESTRO", False: "SIN_MAESTRO"})
-    result["Marca"] = result["Marca"].map(normalized_text).replace("", "SIN_MAESTRO").fillna("SIN_MAESTRO")
-    result["Categoria Cuota"] = result["Categoria Cuota"].map(normalized_text).replace("", "SIN_MAESTRO").fillna("SIN_MAESTRO")
+    result["Marca"] = normalized_series(result["Marca"]).replace("", "SIN_MAESTRO")
+    result["Categoria Cuota"] = normalized_series(result["Categoria Cuota"]).replace("", "SIN_MAESTRO")
     return result
