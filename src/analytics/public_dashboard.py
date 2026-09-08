@@ -33,7 +33,10 @@ def operational_frame(source: pd.DataFrame) -> pd.DataFrame:
     # comparable unit model when it is calculable, but preserve the source
     # stage value when a zero/invalid quantity would otherwise make an entire
     # aggregate unavailable.  This is an explicit fallback, never a zero-fill.
-    d['gmv_ingresado'] = source.Valor_Neto_Ingresado.where(source.Valor_Neto_Ingresado.ge(0))
+    # Commercial adjustments can be signed. Keep them in the entered-value
+    # denominator so the funnel reconciles the source instead of dropping a
+    # valid row and suppressing the whole metric.
+    d['gmv_ingresado'] = source.Valor_Neto_Ingresado
     d['kg_ingresado'] = source.Peso_Ingresado.where(source.Peso_Ingresado.ge(0))
     stage_sources = {
         'facturado': ('cant_facturada', 'Valor_Neto_Facturado', 'Peso_Facturado'),

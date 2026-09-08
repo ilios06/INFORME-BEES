@@ -63,6 +63,14 @@ class PublicOperationsTest(unittest.TestCase):
         self.assertEqual(result.gmv_devuelto, 40)
         self.assertEqual(result.fuga_pre, 40)
 
+    def test_signed_entered_adjustment_is_preserved_in_funnel_base(self):
+        data = fixture()
+        data.loc[0, ['Valor_Neto_Ingresado', 'Valor_Neto_Facturado', 'Valor_Neto_Devuelto']] = [-10, 0, 0]
+        result = summary(layers(operational_frame(data)), ['Total']).iloc[0]
+        self.assertEqual(result.gmv_ingresado, 90)
+        self.assertEqual(result.gmv_facturado, 80)
+        self.assertEqual(result.fuga_pre, 20)
+
     def test_filters(self):
         result = select(layers(operational_frame(fixture())), '2026-08-01','2026-08-31', {'canal':['COSTEÑO']})
         self.assertTrue(result['cube'].empty)
