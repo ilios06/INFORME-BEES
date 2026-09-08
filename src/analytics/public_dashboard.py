@@ -29,11 +29,22 @@ def operational_frame(source: pd.DataFrame) -> pd.DataFrame:
     d['cant_devuelta'] = d.cant_devuelta.where(d.cant_devuelta.le(d.cant_facturada))
     price = divide(source.Valor_Neto_Ingresado, d.cant_ingresada).where(lambda s: s.ge(0))
     weight = divide(source.Peso_Ingresado, d.cant_ingresada).where(lambda s: s.ge(0))
-    for stage, qty in [('ingresado', 'cant_ingresada'), ('facturado', 'cant_facturada'), ('devuelto', 'cant_devuelta')]:
-        d['gmv_' + stage], d['kg_' + stage] = d[qty] * price, d[qty] * weight
+    # The base supplies net amounts and weights for every stage.  Prefer the
+    # comparable unit model when it is calculable, but preserve the source
+    # stage value when a zero/invalid quantity would otherwise make an entire
+    # aggregate unavailable.  This is an explicit fallback, never a zero-fill.
+    d['gmv_ingresado'] = source.Valor_Neto_Ingresado.where(source.Valor_Neto_Ingresado.ge(0))
+    d['kg_ingresado'] = source.Peso_Ingresado.where(source.Peso_Ingresado.ge(0))
+    stage_sources = {
+        'facturado': ('cant_facturada', 'Valor_Neto_Facturado', 'Peso_Facturado'),
+        'devuelto': ('cant_devuelta', 'Valor_Neto_Devuelto', 'Peso_Neto_Devuelto'),
+    }
+    for stage, (qty, source_value, source_weight) in stage_sources.items():
+        d['gmv_' + stage] = (d[qty] * price).fillna(source[source_value].where(source[source_value].ge(0)))
+        d['kg_' + stage] = (d[qty] * weight).fillna(source[source_weight].where(source[source_weight].ge(0)))
     d['gmv_entregado'] = d.gmv_facturado - d.gmv_devuelto
-    gap = (d.cant_ingresada - d.cant_facturada).clip(lower=0)
-    d['fuga_pre'], d['kg_fuga_pre'] = gap * price, gap * weight
+    d['fuga_pre'] = (d.gmv_ingresado - d.gmv_facturado).clip(lower=0)
+    d['kg_fuga_pre'] = (d.kg_ingresado - d.kg_facturado).clip(lower=0)
     d['devuelto'] = d.cant_devuelta.gt(0) | source.Total_Devuelto.gt(0)
     for col in ['region', 'zona', 'ruta', 'canal', 'categoria_sku', 'marca_sku', 'motivo_devol']:
         d[col] = d[col].fillna('SIN_CLASIFICAR').astype('category')

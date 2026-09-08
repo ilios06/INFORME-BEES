@@ -52,6 +52,17 @@ class PublicOperationsTest(unittest.TestCase):
         self.assertTrue(pd.isna(result.gmv_devuelto))
         self.assertTrue(pd.isna(result.tasa_devolucion))
 
+    def test_explicit_stage_values_keep_funnel_available_when_units_cannot_model_a_line(self):
+        data = fixture()
+        data.loc[0, ['Cantidad_Ingresada', 'Cantidad_Facturada', 'Cantidad_Devuelta_UM_Comercial']] = 0
+        data.loc[0, ['Valor_Neto_Ingresado', 'Valor_Neto_Facturado', 'Valor_Neto_Devuelto']] = [100, 80, 20]
+        data.loc[0, ['Peso_Ingresado', 'Peso_Facturado', 'Peso_Neto_Devuelto']] = [20, 16, 4]
+        result = summary(layers(operational_frame(data)), ['Total']).iloc[0]
+        self.assertEqual(result.gmv_ingresado, 200)
+        self.assertEqual(result.gmv_facturado, 160)
+        self.assertEqual(result.gmv_devuelto, 40)
+        self.assertEqual(result.fuga_pre, 40)
+
     def test_filters(self):
         result = select(layers(operational_frame(fixture())), '2026-08-01','2026-08-31', {'canal':['COSTEÑO']})
         self.assertTrue(result['cube'].empty)
