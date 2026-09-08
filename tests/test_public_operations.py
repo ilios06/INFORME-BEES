@@ -5,7 +5,7 @@ from streamlit.testing.v1 import AppTest
 from test_contracts import raw_row
 from src.processing.cleaner import clean_conciliation, parse_regional_number, parse_regional_series, fold_series
 from src.processing.reconciler import merge_master, apply_business_rules
-from src.analytics.public_dashboard import operational_frame
+from src.analytics.public_dashboard import adaptive_granularity, operational_frame, period_compare
 from src.analytics.operations import layers, summary, select
 
 
@@ -20,6 +20,17 @@ def fixture():
 
 
 class PublicOperationsTest(unittest.TestCase):
+    def test_adaptive_granularity_thresholds(self):
+        self.assertEqual(adaptive_granularity('2026-01-01', '2026-01-31'), 'Diario')
+        self.assertEqual(adaptive_granularity('2026-01-01', '2026-02-01'), 'Semanal')
+        self.assertEqual(adaptive_granularity('2026-01-01', '2026-06-29'), 'Semanal')
+        self.assertEqual(adaptive_granularity('2026-01-01', '2026-06-30'), 'Mensual')
+
+    def test_comparison_periods_are_exact(self):
+        self.assertEqual(period_compare('2026-08-10', '2026-08-19', 'Vs. periodo anterior (PoP)'),
+                         (pd.Timestamp('2026-07-31'), pd.Timestamp('2026-08-09')))
+        self.assertEqual(period_compare('2026-08-10', '2026-08-19', 'Vs. mismo periodo año anterior (YoY)'),
+                         (pd.Timestamp('2025-08-10'), pd.Timestamp('2025-08-19')))
     def test_parser_parity(self):
         values = pd.Series(['57,992838','1.234,56','1,234.56','(S/ 12,34)',None,'bad',1.23, True,'nan'])
         pd.testing.assert_series_equal(parse_regional_series(values), values.map(parse_regional_number), check_names=False)

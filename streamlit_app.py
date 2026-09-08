@@ -31,6 +31,10 @@ def inject_design_tokens() -> None:
     [data-testid="stCaptionContainer"], .stCaption, .stCaption p {{ color: var(--muted) !important; }}
     @media (hover: hover) and (pointer: fine) {{ [data-testid="stMetric"]:hover, [data-testid="stVerticalBlockBorderWrapper"]:hover {{ border-color: var(--focus); transform: translateY(-1px); box-shadow: 0 8px 20px var(--shadow); }} }}
     .stButton > button {{ min-height: 2.65rem; border-radius: 8px; border-color: var(--border); color: var(--text); background: var(--surface); transition: background-color 160ms ease, border-color 160ms ease, transform 120ms ease; touch-action: manipulation; }}
+    [data-baseweb="select"] > div, [data-baseweb="input"] > div, [data-testid="stDateInput"] input {{ background: var(--surface) !important; color: var(--text) !important; border-color: var(--border) !important; }}
+    [data-baseweb="select"] *, [data-baseweb="input"] input {{ color: var(--text) !important; }}
+    [role="radiogroup"] {{ gap: .45rem; flex-wrap: wrap; }}
+    [data-testid="stHorizontalBlock"] {{ gap: 1rem; align-items: stretch; }}
     .stButton > button:active {{ transform: translateY(1px); }}
     button:focus-visible, [role="combobox"]:focus-visible, input:focus-visible {{ outline: 3px solid var(--focus); outline-offset: 2px; }}
     .eyebrow {{ color: var(--muted); font-size: .78rem; font-weight: 650; letter-spacing: .11em; text-transform: uppercase; }}
@@ -99,33 +103,44 @@ def render_loading() -> None:
         column.markdown('<div class="skeleton" aria-label="Cargando métricas"></div>', unsafe_allow_html=True)
 
 
-def filtered_data(data: pd.DataFrame, zone: str, channel: str, period: tuple[pd.Timestamp, pd.Timestamp]) -> pd.DataFrame:
+def filtered_data(data: pd.DataFrame, zone: str, route: str, channel: str, period: tuple[pd.Timestamp, pd.Timestamp]) -> pd.DataFrame:
     result = data.loc[data["Fecha_Ingreso_DT"].between(period[0], period[1])].copy()
     if zone != "TODAS":
         result = result.loc[result["Zona_OfVta_Clean"] == zone]
+    if route != "TODAS":
+        result = result.loc[result["Ruta_Final"] == route]
     if channel != "TODOS":
         result = result.loc[result["Canal_UI"] == channel]
     return result
 
 
 def chart_layout(title: str) -> dict:
-    return {"title": {"text": title, "font": {"color": PALETTE["text"], "size": 16}}, "paper_bgcolor": PALETTE["card"], "plot_bgcolor": PALETTE["card"], "font": {"color": PALETTE["muted"]}, "margin": {"l": 10, "r": 10, "t": 48, "b": 12}, "legend": {"orientation": "h", "y": 1.12}, "hovermode": "x unified"}
+    return {"title": {"text": title, "font": {"color": "var(--text)", "size": 16}}, "paper_bgcolor": "var(--card)", "plot_bgcolor": "var(--card)", "font": {"color": "var(--muted)"}, "margin": {"l": 10, "r": 10, "t": 48, "b": 12}, "legend": {"orientation": "h", "y": 1.12}, "hovermode": "x unified"}
 
 
-def date_period_from_sidebar(min_date: pd.Timestamp, max_date: pd.Timestamp) -> tuple[date, date] | None:
-    mode = st.radio("Periodo", ("Histórico completo", "Últimos 3 meses", "Último mes", "Rango personalizado"), key="filters_period_mode")
+def temporal_controls(min_date: pd.Timestamp, max_date: pd.Timestamp) -> tuple[tuple[date, date] | None, str, str, float | None]:
+    mode = st.radio("Rango de fechas", ("Mes actual", "Últimas 4 semanas", "Trimestre", "Histórico completo", "Personalizado"), key="filters_period_mode")
     if mode == "Histórico completo":
-        return min_date.date(), max_date.date()
-    if mode == "Últimos 3 meses":
-        return max(min_date.date(), recent_window_start(max_date.date())), max_date.date()
-    if mode == "Último mes":
-        return date(max_date.year, max_date.month, 1), max_date.date()
-    selected = st.date_input("Rango personalizado", value=(min_date.date(), max_date.date()), min_value=min_date.date(), max_value=max_date.date(), key="filters_custom_period")
-    return selected if isinstance(selected, tuple) and len(selected) == 2 else None
+        period = (min_date.date(), max_date.date())
+    elif mode == "Trimestre":
+        period = (max(min_date.date(), (max_date - pd.DateOffset(months=3)).date()), max_date.date())
+    elif mode == "Últimas 4 semanas":
+        period = (max(min_date.date(), (max_date - pd.Timedelta(days=27)).date()), max_date.date())
+    elif mode == "Mes actual":
+        period = (date(max_date.year, max_date.month, 1), max_date.date())
+    else:
+        selected = st.date_input("Inicio y fin", value=(min_date.date(), max_date.date()), min_value=min_date.date(), max_value=max_date.date(), key="filters_custom_period")
+        period = selected if isinstance(selected, tuple) and len(selected) == 2 else None
+    granularity = st.selectbox("Granularidad", ("Automática", "Diario", "Semanal", "Mensual"), help="Automática: diario hasta 31 días, semanal hasta 180 y mensual después.", key="filters_granularity")
+    comparison = st.selectbox("Comparativa", ("Sin comparativa", "Vs. periodo anterior (PoP)", "Vs. mismo periodo año anterior (YoY)", "Meta manual"), key="filters_comparison")
+    meta = None
+    if comparison == "Meta manual":
+        meta = st.number_input("Meta de GMV facturado (S/)", min_value=0.0, value=0.0, step=1000.0, key="filters_meta")
+    return period, granularity, comparison, meta
 
 
 def reset_filters() -> None:
-    for key in ("filters_zone", "filters_channel", "filters_period_mode", "filters_custom_period"):
+    for key in ("filters_zone", "filters_route", "filters_channel", "filters_period_mode", "filters_custom_period", "filters_granularity", "filters_comparison", "filters_meta"):
         st.session_state.pop(key, None)
 
 
@@ -152,23 +167,29 @@ def main() -> None:
     st.caption(f"Cobertura disponible: {min_date:%d/%m/%Y} a {max_date:%d/%m/%Y}. Datos agregados, sin detalle ni exportación.")
     with st.sidebar:
         st.header("Filtros")
+        st.caption("Control temporal")
+        period, granularity, comparison, meta = temporal_controls(min_date, max_date)
+        st.divider()
+        st.caption("Filtros de corte")
+        region = st.selectbox("Región", ["TODAS"], disabled=True, help="La fuente actual no contiene una región validada.")
         zone = st.selectbox("Zona", ["TODAS", *sorted(data["Zona_OfVta_Clean"].dropna().unique())], key="filters_zone")
+        route = st.selectbox("Ruta", ["TODAS", *sorted(data["Ruta_Final"].dropna().unique())], key="filters_route")
         channel = st.selectbox("Canal", ["TODOS", *sorted(data["Canal_UI"].dropna().unique())], key="filters_channel")
-        period = date_period_from_sidebar(min_date, max_date)
         st.caption("Los filtros solo recalculan agregados de esta sesión.")
-        if st.button("Restablecer filtros", use_container_width=True):
+        if st.button("Restablecer filtros", width="stretch"):
             reset_filters(); st.rerun()
-        if st.button("Refrescar fuentes", use_container_width=True):
+        if st.button("Refrescar fuentes", width="stretch"):
             st.cache_data.clear(); st.rerun()
     if period is None:
         st.info("Selecciona fecha de inicio y cierre."); return
     section = st.radio('Navegación', ['Resumen', 'Control de fugas', 'Canales', 'Rutas', 'Fricción'],
                        horizontal=True, key='dashboard_section')
-    st.caption(f"Zona: {zone} · Canal: {channel} · {period[0]:%d/%m/%Y} — {period[1]:%d/%m/%Y}")
+    st.caption(f"Zona: {zone} · Ruta: {route} · Canal: {channel} · {period[0]:%d/%m/%Y} — {period[1]:%d/%m/%Y}")
     if section != 'Resumen':
-        render_operations(data, section, period, zone, channel)
+        render_operations(data, section, period, zone=zone, channel=channel, region=region, route=route,
+                          granularity=granularity, comparison=comparison, meta=meta)
         return
-    active = filtered_data(data, zone, channel, (pd.Timestamp(period[0]), pd.Timestamp(period[1])))
+    active = filtered_data(data, zone, route, channel, (pd.Timestamp(period[0]), pd.Timestamp(period[1])))
     if active.empty:
         st.info("No hay pedidos para esta combinación. Ajusta los filtros para ver los indicadores.")
         return
@@ -185,16 +206,16 @@ def main() -> None:
         with left:
             figure = px.line(by_month, x="Mes", y="Valor_final", markers=True, color_discrete_sequence=[PALETTE["primary"]])
             figure.update_traces(line={"width": 3}, marker={"size": 7}); figure.update_layout(**chart_layout("Evolución del valor final conciliado"), yaxis_title="Soles", xaxis_title=""); figure.update_xaxes(gridcolor=PALETTE["border"]); figure.update_yaxes(gridcolor=PALETTE["border"])
-            st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
         with right:
             figure = px.pie(by_channel, values="Valor_final", names="Canal_UI", hole=.64, color_discrete_sequence=[PALETTE["primary"], PALETTE["secondary"], PALETTE["border"]]); figure.update_layout(**chart_layout("Participación por canal"), showlegend=True)
-            st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
     else:
         st.info("No hay valor final conciliado distinto de cero para los filtros elegidos.")
     states = active.groupby("Estado_Conciliacion", as_index=False).agg(Pedidos=("ID_Pedido_Ingresado", "nunique"))
     figure = px.bar(states, x="Estado_Conciliacion", y="Pedidos", color="Estado_Conciliacion", color_discrete_map={"ENTREGADO_TOTAL": PALETTE["positive"], "ENTREGADO_PARCIAL": PALETTE["primary"], "NO_FACTURADO": PALETTE["negative"], "SIN_VALOR_FINAL": PALETTE["muted"]})
     figure.update_layout(**chart_layout("Embudo de estado de conciliación"), showlegend=False, xaxis_title="", yaxis_title="Pedidos"); figure.update_xaxes(gridcolor=PALETTE["border"]); figure.update_yaxes(gridcolor=PALETTE["border"])
-    st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
     with st.expander("Calidad y trazabilidad de la actualización"):
         active_quality = quality_metrics(active)
         summary = pd.DataFrame([
