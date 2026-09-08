@@ -1,4 +1,4 @@
-# Vistas operativas públicas — 2026-09-05
+# Vistas operativas públicas — 2026-09-08
 
 ## Alcance
 
@@ -43,10 +43,39 @@ de ausencia de identidades en tablas. Las pruebas usan datos sintéticos.
 Una prueba adicional con secretos locales se ejecuta sin registrar credenciales
 ni filas. La evidencia de publicación debe comprobarse aparte en la URL pública.
 
-## Unificación de aplicaciones
+## Fuente operativa única
 
-Objetivo: dashboard-bees.streamlit.app sobre main. GitHub no controla por sí solo
-la asociación de rama guardada en Streamlit Community Cloud. Se requiere una
-sesión administrativa de Streamlit. No borrar la aplicación actual antes de
-validar la sustituta y conservar sus secretos. Mantener ambas ramas sincronizadas
-es una medida transitoria, no equivale a cambiar la configuración de Cloud.
+Este documento es el hilo operativo vigente para publicación y continuidad.
+
+- Aplicación única: `https://dashboard-bees.streamlit.app`.
+- Rama canónica de despliegue: `codex/metricas-operacion-publica`.
+- Punto de entrada: `streamlit_app.py`.
+- La rama `main` se conserva como historial base del repositorio, pero no es
+  fuente de una aplicación de Streamlit.
+- La rama temporal `codex/dashboard-conciliacion-pruebas` y el despliegue
+  duplicado de `main` fueron retirados el 2026-09-08 tras validar la aplicación
+  canónica con filtros, métricas y agregados reales.
+- Los secretos quedan exclusivamente en Streamlit Community Cloud y nunca se
+  versionan ni registran en documentación, commits o pruebas.
+
+## Procedimiento de despliegue y aceptación
+
+1. Confirmar que el cambio está en `codex/metricas-operacion-publica` y que
+   las pruebas reproducibles pasan.
+2. Actualizar únicamente `dashboard-bees.streamlit.app` desde esa rama y
+   `streamlit_app.py`.
+3. Verificar en la sesión administrativa la carga de fuentes, cobertura,
+   filtros, KPIs y los módulos Resumen, Fugas, Canales, Rutas y Fricción.
+4. Probar desde una sesión anónima que la URL no redirige al acceso de Streamlit.
+   Una etiqueta visual de “pública” no sustituye esta comprobación.
+5. Si Streamlit solicita autenticación pese a estar marcada como pública,
+   conservar esta rama canónica y escalar el caso; no recrear ramas ni copias
+   paralelas.
+
+## Estado de la consolidación
+
+- Una sola aplicación configurada en Streamlit: `dashboard-bees.streamlit.app`.
+- Una sola rama Codex de operación: `codex/metricas-operacion-publica`.
+- Accesibilidad visual: contraste para tema claro/oscuro, foco visible,
+  salto seguro de títulos y reducción de movimiento.
+- La disponibilidad pública anónima solo se comunica tras esa validación.
