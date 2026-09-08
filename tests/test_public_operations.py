@@ -56,6 +56,17 @@ class PublicOperationsTest(unittest.TestCase):
         result = select(layers(operational_frame(fixture())), '2026-08-01','2026-08-31', {'canal':['COSTEÑO']})
         self.assertTrue(result['cube'].empty)
 
+    def test_routes_without_invoices_render_an_explanation(self):
+        app = AppTest.from_string('''
+from test_public_operations import fixture
+from src.analytics.public_dashboard import render_operations
+import pandas as pd
+data = fixture(); data['has_invoice'] = False
+render_operations(data, 'Rutas', (pd.Timestamp('2026-08-01'), pd.Timestamp('2026-08-31')))
+''').run(timeout=30)
+        self.assertEqual(len(app.exception), 0, str(app.exception))
+        self.assertIn('No hay rutas con facturación y devolución comparables', ' '.join(item.value for item in app.info))
+
     def test_all_public_views_render_without_identifiers(self):
         for section in ['Control de fugas','Canales','Rutas','Fricción']:
             app = AppTest.from_string('''

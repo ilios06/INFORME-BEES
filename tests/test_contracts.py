@@ -38,6 +38,10 @@ class ConciliationContractsTest(unittest.TestCase):
         frame, _ = clean_conciliation(pd.DataFrame([raw_row("A", "01/08/2026", "F-1", "57,992838")]), "3M")
         self.assertAlmostEqual(frame.loc[0, "Saldo_Total_Pedido"], 57.992838)
 
+    def test_ingress_date_accepts_single_digit_day_contract(self):
+        frame, _ = clean_conciliation(pd.DataFrame([raw_row("A", "1/09/2026")]), "3M")
+        self.assertEqual(frame.loc[0, "Fecha_Ingreso_DT"], pd.Timestamp("2026-09-01"))
+
     def test_business_status_and_missing_master_are_explicit(self):
         frame, _ = clean_conciliation(pd.DataFrame([raw_row("A", "01/08/2026", "", 20), raw_row("B", "01/08/2026", "F-1", 20)]), "3M")
         frame.loc[1, "Motivo_Devolucion"] = "Dif precio"

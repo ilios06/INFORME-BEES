@@ -73,8 +73,9 @@ def clean_conciliation(raw: pd.DataFrame, source_name: str) -> tuple[pd.DataFram
         frame[f"{column}__invalid_format"] = ~frame[f"{column}__missing_source"] & parsed.isna()
         frame[column] = parsed
 
-    frame["Fecha_Ingreso_DT"] = pd.to_datetime(frame["Fecha_Ingreso"], dayfirst=True, errors="coerce")
-    frame["Fecha_Facturacion_DT"] = pd.to_datetime(frame["Fecha_Facturacion"], dayfirst=True, errors="coerce")
+    # The source contract is D/MM/AAAA (single-digit days are valid).
+    frame["Fecha_Ingreso_DT"] = pd.to_datetime(frame["Fecha_Ingreso"], format="%d/%m/%Y", errors="coerce")
+    frame["Fecha_Facturacion_DT"] = pd.to_datetime(frame["Fecha_Facturacion"], format="%d/%m/%Y", errors="coerce")
     frame["source_name"] = source_name
     frame["source_row"] = range(2, len(frame) + 2)
     frame["has_invoice"] = ~frame["ID_Factura_Final"].str.lower().isin({"", "0", "0.0"})

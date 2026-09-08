@@ -101,8 +101,8 @@ def display_table(frame: pd.DataFrame) -> None:
     st.dataframe(presentation.rename(columns=labels).round(2), width='stretch', hide_index=True)
 
 
-def _filters(region: str, zone: str, route: str, channel: str) -> dict[str, list[str]]:
-    return {'region': [] if region == 'TODAS' else [region], 'zona': [] if zone == 'TODAS' else [zone],
+def _filters(zone: str, route: str, channel: str) -> dict[str, list[str]]:
+    return {'zona': [] if zone == 'TODAS' else [zone],
             'ruta': [] if route == 'TODAS' else [route], 'canal': [] if channel == 'TODOS' else [channel]}
 
 
@@ -177,10 +177,15 @@ def _routes_module(selected, granularity) -> None:
     chart = px.bar(ranked, x='kg_facturado', y='ruta', color='canal', orientation='h', barmode='stack', labels={'kg_facturado': 'Kg facturados', 'ruta': 'Ruta'}, color_discrete_sequence=[PALETTE['primary'], PALETTE['secondary']])
     chart.update_layout(title=f'Top 15 rutas por carga · {direction}', yaxis={'categoryorder': 'total ascending'}); show_chart(chart)
     operational = summary(selected, ['zona', 'ruta']); operational['toneladas_por_pedido'] = operational.drop_kg / 1_000
-    chart = px.scatter(operational, x='pedidos_facturados', y='toneladas_por_pedido', size='ticket', color='tasa_devolucion', hover_name='ruta',
-        color_continuous_scale=['#2E9D70', '#E3A23B', '#C75252'], labels={'pedidos_facturados': 'Pedidos facturados', 'toneladas_por_pedido': 't por pedido', 'tasa_devolucion': 'Devolución (%)', 'ticket': 'S/ por pedido'})
-    chart.add_vline(x=operational.pedidos_facturados.median(), line_dash='dot', line_color=PALETTE['muted']); chart.add_hline(y=operational.toneladas_por_pedido.median(), line_dash='dot', line_color=PALETTE['muted'])
-    chart.update_layout(title='Matriz de presión: paradas, carga y devolución'); show_chart(chart)
+    valid = operational.replace([np.inf, -np.inf], np.nan).dropna(subset=['pedidos_facturados', 'toneladas_por_pedido', 'ticket', 'tasa_devolucion'])
+    valid = valid.loc[valid.ticket.gt(0) & valid.pedidos_facturados.gt(0)]
+    if valid.empty:
+        st.info('No hay rutas con facturación y devolución comparables para la matriz en este período.')
+    else:
+        chart = px.scatter(valid, x='pedidos_facturados', y='toneladas_por_pedido', size='ticket', color='tasa_devolucion', hover_name='ruta',
+            color_continuous_scale=['#2E9D70', '#E3A23B', '#C75252'], labels={'pedidos_facturados': 'Pedidos facturados', 'toneladas_por_pedido': 't por pedido', 'tasa_devolucion': 'Devolución (%)', 'ticket': 'S/ por pedido'})
+        chart.add_vline(x=valid.pedidos_facturados.median(), line_dash='dot', line_color=PALETTE['muted']); chart.add_hline(y=valid.toneladas_por_pedido.median(), line_dash='dot', line_color=PALETTE['muted'])
+        chart.update_layout(title='Matriz de presión: paradas, carga y devolución'); show_chart(chart)
     heat = _time_summary(selected, granularity, ['ruta']).pivot(index='ruta', columns='periodo', values='tasa_devolucion').dropna(how='all').head(30)
     if not heat.empty:
         chart = px.imshow(heat, aspect='auto', color_continuous_scale=['#2E9D70', '#F3C566', '#C75252'], labels={'color': 'Devolución (%)', 'x': 'Periodo', 'y': 'Ruta'})
@@ -208,8 +213,8 @@ def _friction_module(selected) -> None:
         chart.update_layout(title='Fuga pre por categoría y marca'); show_chart(chart)
 
 
-def render_operations(data: pd.DataFrame, section: str, period, zone: str = 'TODAS', channel: str = 'TODOS', region: str = 'TODAS', route: str = 'TODAS', granularity: str = 'Automática', comparison: str = 'Sin comparativa', meta: float | None = None) -> None:
-    prepared = prepare_operations(data); filters = _filters(region, zone, route, channel); selected = select(prepared, *period, filters)
+def render_operations(data: pd.DataFrame, section: str, period, zone: str = 'TODAS', channel: str = 'TODOS', route: str = 'TODAS', granularity: str = 'Automática', comparison: str = 'Sin comparativa', meta: float | None = None) -> None:
+    prepared = prepare_operations(data); filters = _filters(zone, route, channel); selected = select(prepared, *period, filters)
     if selected['cube'].empty: st.info('No hay registros para los filtros activos.'); return
     grain = adaptive_granularity(*period, granularity); total = summary(selected, ['Total']).iloc[0]; reference = _reference(prepared, period, filters, comparison)
     st.subheader(section); st.caption(f'Granularidad activa: {grain.lower()} · Comparativa: {comparison}. Modelo comparable sin impuestos; pesos en toneladas cuando corresponde.')

@@ -119,13 +119,11 @@ def chart_layout(title: str) -> dict:
 
 
 def temporal_controls(min_date: pd.Timestamp, max_date: pd.Timestamp) -> tuple[tuple[date, date] | None, str, str, float | None]:
-    mode = st.radio("Rango de fechas", ("Mes actual", "Últimas 4 semanas", "Trimestre", "Histórico completo", "Personalizado"), key="filters_period_mode")
+    mode = st.radio("Rango de fechas", ("Histórico completo", "Mes actual", "Trimestre", "Personalizado"), key="filters_period_mode")
     if mode == "Histórico completo":
         period = (min_date.date(), max_date.date())
     elif mode == "Trimestre":
         period = (max(min_date.date(), (max_date - pd.DateOffset(months=3)).date()), max_date.date())
-    elif mode == "Últimas 4 semanas":
-        period = (max(min_date.date(), (max_date - pd.Timedelta(days=27)).date()), max_date.date())
     elif mode == "Mes actual":
         period = (date(max_date.year, max_date.month, 1), max_date.date())
     else:
@@ -171,9 +169,12 @@ def main() -> None:
         period, granularity, comparison, meta = temporal_controls(min_date, max_date)
         st.divider()
         st.caption("Filtros de corte")
-        region = st.selectbox("Región", ["TODAS"], disabled=True, help="La fuente actual no contiene una región validada.")
         zone = st.selectbox("Zona", ["TODAS", *sorted(data["Zona_OfVta_Clean"].dropna().unique())], key="filters_zone")
-        route = st.selectbox("Ruta", ["TODAS", *sorted(data["Ruta_Final"].dropna().unique())], key="filters_route")
+        route_scope = data if zone == "TODAS" else data.loc[data["Zona_OfVta_Clean"] == zone]
+        route_options = ["TODAS", *sorted(route_scope["Ruta_Final"].dropna().unique())]
+        if st.session_state.get("filters_route") not in route_options:
+            st.session_state.pop("filters_route", None)
+        route = st.selectbox("Ruta", route_options, key="filters_route")
         channel = st.selectbox("Canal", ["TODOS", *sorted(data["Canal_UI"].dropna().unique())], key="filters_channel")
         st.caption("Los filtros solo recalculan agregados de esta sesión.")
         if st.button("Restablecer filtros", width="stretch"):
@@ -186,7 +187,7 @@ def main() -> None:
                        horizontal=True, key='dashboard_section')
     st.caption(f"Zona: {zone} · Ruta: {route} · Canal: {channel} · {period[0]:%d/%m/%Y} — {period[1]:%d/%m/%Y}")
     if section != 'Resumen':
-        render_operations(data, section, period, zone=zone, channel=channel, region=region, route=route,
+        render_operations(data, section, period, zone=zone, channel=channel, route=route,
                           granularity=granularity, comparison=comparison, meta=meta)
         return
     active = filtered_data(data, zone, route, channel, (pd.Timestamp(period[0]), pd.Timestamp(period[1])))
